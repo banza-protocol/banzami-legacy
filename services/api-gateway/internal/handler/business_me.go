@@ -178,6 +178,21 @@ func (h *BusinessMeHandler) Me(w http.ResponseWriter, r *http.Request) {
 	if res.FeeDestination != nil {
 		body["fee_destination"] = res.FeeDestination
 	}
+
+	// Which Project this readiness describes.
+	//
+	// The resource answers "can my integration settle, and what is missing" and
+	// said nothing about what "my" referred to. A caller holding one key knows
+	// implicitly; a caller holding several, or storing the answer beside its own
+	// records, had nothing stable to file it under. Present only for a project
+	// credential: a merchant JWT is not a Project and inventing an id for it
+	// would make one up.
+	if dp, isDev := middleware.GetDeveloperPrincipal(r.Context()); isDev {
+		body["project"] = map[string]any{
+			"id":   PublicProjectID(dp.ProjectID),
+			"slug": dp.ProjectSlug,
+		}
+	}
 	writeJSON(w, http.StatusOK, body)
 }
 

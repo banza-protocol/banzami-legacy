@@ -37,7 +37,12 @@ func (h *MeHandler) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"environment": p.Environment,
 		"project":     p.ProjectSlug,
-		"scopes":      p.Scopes,
-		"key_status":  p.KeyStatus,
+		// The slug is what a developer typed and can retype. project_id does not
+		// move when they rename the project, so an integration has something
+		// stable to file its own records under. Derived, not the internal UUID —
+		// see PublicProjectID.
+		"project_id": PublicProjectID(p.ProjectID),
+		"scopes":     p.Scopes,
+		"key_status": p.KeyStatus,
 	})
 }

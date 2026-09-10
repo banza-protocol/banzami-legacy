@@ -232,13 +232,18 @@ export class BanzamiClient {
 
   /**
    * Resolve the identity of the configured Sandbox API key: its environment,
-   * workspace, project and scopes. This authenticates directly with the raw
-   * Console-issued key (GET /v1/me), not the merchant JWT-exchange path, and is
-   * the canonical way to verify an integration is wired correctly.
+   * project and scopes. This authenticates directly with the raw Console-issued
+   * key (GET /v1/me), not the merchant JWT-exchange path, and is the canonical
+   * way to verify an integration is wired correctly.
+   *
+   * `project` is the slug — human-readable, and it changes when the project is
+   * renamed. `projectId` does not: file your own records under that one.
    */
   async me(): Promise<{
     environment: string;
     project: string;
+    /** Stable, opaque public id (`proj_…`). Survives a rename. */
+    project_id: string;
     scopes: string[];
     key_status: string;
   }> {
@@ -257,7 +262,8 @@ export class BanzamiClient {
       throw new BanzamiApiError(res.status, code, message);
     }
     return res.json() as Promise<{
-      environment: string; project: string; scopes: string[]; key_status: string;
+      environment: string; project: string; project_id: string;
+      scopes: string[]; key_status: string;
     }>;
   }
 

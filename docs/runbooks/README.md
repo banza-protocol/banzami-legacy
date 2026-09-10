@@ -16,6 +16,12 @@ Runbooks are step-by-step procedures for common operational tasks. They describe
 | [RB-006: Merchant API Key Revocation](#rb-006-merchant-api-key-revocation) | Revoke a compromised API key |
 | [RB-007: Incident — Duplicate Ledger Entry](#rb-007-incident-duplicate-ledger-entry) | Investigate and resolve duplicate entries |
 
+## Release runbooks
+
+| Runbook | Purpose |
+|---------|---------|
+| [Release A cutover](release-a-cutover.md) | The order code, the environment repair (0113) and the historical proof backfill must run in, and the two windows that order exists to close |
+
 ---
 
 ## RB-001: Deployment

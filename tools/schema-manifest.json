@@ -1,5 +1,5 @@
 {
-  "$comment": "Authoritative expected-schema manifest for the drift detector (tools/check-schema-manifest.mjs). Declares SHIPPED physical objects for critical/repaired features. Grows in the SAME change that ships a feature's migration. Proposed/held objects (e.g. restitution_allocations — Workstream B) are added only when their migration ships. Sandbox and Production are checked as SEPARATE targets.",
+  "$comment": "Authoritative expected-schema manifest for the drift detector (tools/check-schema-manifest.mjs). Declares SHIPPED physical objects for critical/repaired features. Grows in the SAME change that ships a feature's migration. Proposed/held objects (e.g. restitution_allocations \u2014 Workstream B) are added only when their migration ships. Sandbox and Production are checked as SEPARATE targets.",
   "version": 1,
   "features": [
     {
@@ -247,8 +247,8 @@
       ]
     },
     {
-      "feature": "developer-platform (ADR-033 / ADR-046) — schema=developer",
-      "$note": "The developer.* schema is the external Developer Platform + API-key authority (developer-api). It is now under the same rollout gate as the financial core (RT04B §1): a missing developer.* migration must FAIL the gate. Table presence is checked for the whole schema; the ADR-047 binding table below is checked at column+index granularity.",
+      "feature": "developer-platform (ADR-033 / ADR-046) \u2014 schema=developer",
+      "$note": "The developer.* schema is the external Developer Platform + API-key authority (developer-api). It is now under the same rollout gate as the financial core (RT04B \u00a71): a missing developer.* migration must FAIL the gate. Table presence is checked for the whole schema; the ADR-047 binding table below is checked at column+index granularity.",
       "tables": [
         {
           "name": "developer.dev_workspaces",
@@ -288,8 +288,8 @@
       ]
     },
     {
-      "feature": "developer-project-sandbox-binding (0100 / ADR-047) — schema=developer",
-      "$note": "The Project→Merchant SANDBOX payee binding authority (RT04B). Column+index granularity: the one-ACTIVE-binding-per-project partial unique index is a load-bearing financial-authority constraint.",
+      "feature": "developer-project-sandbox-binding (0100 / ADR-047) \u2014 schema=developer",
+      "$note": "The Project\u2192Merchant SANDBOX payee binding authority (RT04B). Column+index granularity: the one-ACTIVE-binding-per-project partial unique index is a load-bearing financial-authority constraint.",
       "tables": [
         {
           "name": "developer.dev_project_sandbox_binding",
@@ -335,7 +335,7 @@
       ]
     },
     {
-      "feature": "developer-api-request-logs (0104 / ADR-054) — schema=developer",
+      "feature": "developer-api-request-logs (0104 / ADR-054) \u2014 schema=developer",
       "$note": "The Console's API Logs screen. Written by api-gateway at developer-key authentication, read by developer-api scoped to one project. Column granularity because the columns ARE the privacy boundary: this table has no header, body or credential column and no JSONB, so an added one is drift worth failing on.",
       "tables": [
         {
@@ -391,8 +391,8 @@
       ]
     },
     {
-      "feature": "account-identity (ADR-033) — schema=account_identity",
-      "$note": "The account_identity.* schema backs Developer Console authentication (developer-api). Under the rollout gate (RT04B §1) at table-presence granularity.",
+      "feature": "account-identity (ADR-033) \u2014 schema=account_identity",
+      "$note": "The account_identity.* schema backs Developer Console authentication (developer-api). Under the rollout gate (RT04B \u00a71) at table-presence granularity.",
       "tables": [
         {
           "name": "account_identity.identity_users",
@@ -465,6 +465,92 @@
               "name": "code",
               "nullable": false
             },
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "feature": "environment isolation (0018 / repaired by 0113)",
+      "tables": [
+        {
+          "name": "payment_links",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "qr_codes",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "transfers",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "payouts",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "webhook_endpoints",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "transactions",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "wallet_payments",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "api_keys",
+          "columns": [
+            {
+              "name": "environment",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "transaction_proofs",
+          "columns": [
             {
               "name": "environment",
               "nullable": false

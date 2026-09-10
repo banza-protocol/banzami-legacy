@@ -41,7 +41,7 @@ feature beyond the fixture; nothing exposed publicly.
 | F0-DP-008 | Online checkout completes (+ ledger + idempotency) | PASS |
 | F0-DP-009 | Receipt verification (state + privacy + non-fabricable) | PASS |
 | F0-DP-010 | Platform reconciliation (zero discrepancy) | PASS |
-| F0-DP-011 | Webhook event emitted/simulated (signed payload) | SIMULATED |
+| F0-DP-011 | Real signed webhook delivery to an independent public sink | PASS |
 | F0-DP-012 | Revoked API key rejected (genuine revoke → 401) | PASS |
 | F0-DP-013 | Invalid API key rejected (→401) | PASS |
 | F0-DP-014 | Unauthorised platform rejected (→401) | PASS |
@@ -49,8 +49,8 @@ feature beyond the fixture; nothing exposed publicly.
 | F0-DP-016 | Audit/evidence record generated | PASS |
 | F0-DP-UI  | Developer Console UI E2E | BLOCKED |
 
-**Summary: PASS 15 · FAIL 0 · SIMULATED 1 · DEFERRED 0 · BLOCKED 1 · NOT_IN_SCOPE 0 · total 17.**
-(Harness assertions incl. sub-checks: 20 PASS / 0 FAIL / 1 SIMULATED.)
+**Summary: PASS 16 · FAIL 0 · SIMULATED 0 · DEFERRED 0 · BLOCKED 1 · NOT_IN_SCOPE 0 · total 17.**
+(Harness assertions incl. sub-checks: 24 PASS / 0 FAIL / 0 SIMULATED / 0 BLOCKED.)
 
 ## Proof detail
 
@@ -64,8 +64,17 @@ feature beyond the fixture; nothing exposed publicly.
 - **API keys**: active key works (F0-DP-004); revoked key fails (F0-DP-012, genuine
   revoke); invalid key fails (F0-DP-013); wrong-scope key fails (F0-DP-005);
   unauthorised platform fails (F0-DP-014).
-- **Webhooks** (F0-DP-011): SIMULATED — outbound delivery requires a public HTTPS sink;
-  signing (`Banza-Signature` HMAC-SHA256) + retry/backoff + idempotency contract verified.
+- **Webhooks** (F0-DP-011): PASS, and no longer simulated. The stated ground for the
+  simulation was that a live outbound 2xx delivery needs a public HTTPS sink, which the
+  no-external policy excluded. That sink now exists: `sandbox-webhook.banzami.com` is a
+  genuinely public HTTPS receiver — the SSRF policy (RA-023) rightly refuses private
+  targets and no exception was added for it — so the ground no longer holds and the
+  assertion is made for real. A payer confirms a payment link, the deployed runtime
+  delivers on its own schedule to a receiver it does not control, and the signature is
+  checked by an implementation written from the published contract that imports nothing
+  from `services/api-gateway/internal/webhook`. The same delivery is then re-checked
+  under a wrong secret and rejected: a verifier that accepted everything would report a
+  green delivery for a platform that signed nothing.
 - **Audit trail** (F0-DP-016): `developer.audit_events` recorded project.created +
   fixture key creations + fixture key revocation for the synthetic project.
 

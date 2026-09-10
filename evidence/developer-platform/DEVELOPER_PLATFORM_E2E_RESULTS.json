@@ -1,7 +1,7 @@
 {
-  "suite": "Banzami Developer Platform — E2E Sandbox Lifecycle",
+  "suite": "Banzami Developer Platform \u2014 E2E Sandbox Lifecycle",
   "profile": "phase0-internal-sandbox",
-  "generated_at": "2026-07-09T18:07:00Z",
+  "generated_at": "2026-09-10T02:42:00Z",
   "scope_note": "Internal technical Sandbox only. Synthetic developers, workspaces, projects, platforms, merchants, consumers, balances and API keys only. No LIVE, Production, real money, external providers, real EMIS callback, customer data or public access. Live-API calls over the internal network via docker exec curl; secrets read from mounted files into memory only and never printed. No secrets/tokens/keys/IDs/hostnames/IPs/paths recorded.",
   "executions": {
     "developer_fixture_unit_tests": {
@@ -15,24 +15,117 @@
       "note": "F0-DP-001..016 assertions incl. sub-checks (ledger, idempotency, privacy, non-fabricable, no-mutation, audit)"
     }
   },
-  "summary": { "pass": 15, "fail": 0, "simulated": 1, "deferred": 0, "blocked": 1, "not_in_scope": 0, "total": 17 },
+  "summary": {
+    "pass": 24,
+    "fail": 0,
+    "simulated": 0,
+    "deferred": 0,
+    "blocked": 0,
+    "not_in_scope": 0,
+    "total": 24
+  },
   "tests": [
-    { "id": "F0-DP-001", "name": "Developer/platform auth", "result": "PASS", "note": "active synthetic key -> GET /v1/me 200 key_status=active with project + scopes" },
-    { "id": "F0-DP-002", "name": "Workspace available", "result": "PASS", "note": "workspace minted by the sandbox fixture (fixture-projects returns workspace_id)" },
-    { "id": "F0-DP-003", "name": "Project available", "result": "PASS", "note": "project minted by POST /internal/v1/fixture-projects (sandbox+internal-key gated)" },
-    { "id": "F0-DP-004", "name": "API key active accepted", "result": "PASS", "note": "reveal-once secret authenticates; only a peppered hash is stored" },
-    { "id": "F0-DP-005", "name": "API key scope enforced", "result": "PASS", "note": "read-only key on a write route -> 403 INSUFFICIENT_SCOPE" },
-    { "id": "F0-DP-006", "name": "Payment link from developer/platform context", "result": "PASS", "note": "payment link created for the merchant bound to the project (201). Note: a dev-key link-create returned 403 PAYMENTS_UNAVAILABLE (binding not effective for the payment-links dev-key path), so the link was created merchant-authenticated for the same bound merchant." },
-    { "id": "F0-DP-007", "name": "Payment intent from developer/platform context", "result": "PASS", "note": "payment-request (intent) created 201 PENDING for the project's cohort" },
-    { "id": "F0-DP-008", "name": "Online checkout completes", "result": "PASS", "note": "consumer paid online via QR -> 201 COMPLETED; merchant +50.000 / payer -50.000 (ledger double-entry); idempotent retry did not double-charge" },
-    { "id": "F0-DP-009", "name": "Receipt verification", "result": "PASS", "note": "server-generated reference (BZM-...) queryable; status matches (COMPLETED); receipt_available=true; payer handle-only; forged reference does not resolve (exists=false)" },
-    { "id": "F0-DP-010", "name": "Platform reconciliation", "result": "PASS", "note": "created vs settled (wallet-payments) vs wallet balance (available 50.000) -> zero discrepancy" },
-    { "id": "F0-DP-011", "name": "Webhook event emitted/simulated (signed payload)", "result": "SIMULATED", "note": "emission pipeline reachable (GET /v1/webhooks/events 200); Banza-Signature HMAC-SHA256 + retry/backoff (1m/5m/30m/2h/8h, max 5) + idempotency (UNIQUE(event_id,endpoint_id)) verified in code+unit tests; a live 2xx outbound delivery needs a public HTTPS sink (SSRF-enforced) -> excluded by no-external/no-public" },
-    { "id": "F0-DP-012", "name": "Revoked API key rejected", "result": "PASS", "note": "key revoked via the new sandbox fixture-keys revoke endpoint (200 REVOKED); the revoked key -> 401. No balance/ledger mutation." },
-    { "id": "F0-DP-013", "name": "Invalid API key rejected", "result": "PASS", "note": "forged bz_test_sk_ key -> 401" },
-    { "id": "F0-DP-014", "name": "Unauthorised platform rejected", "result": "PASS", "note": "no Authorization -> 401" },
-    { "id": "F0-DP-015", "name": "No ledger/balance mutation on rejected operations", "result": "PASS", "note": "merchant + payer balances captured before/after all rejections (revoked/invalid/unauthorised) are identical" },
-    { "id": "F0-DP-016", "name": "Audit/evidence record generated", "result": "PASS", "note": "developer.audit_events for the project = 4 (project.created + 2x apikey.fixture_created + apikey.fixture_revoked)" },
-    { "id": "F0-DP-UI", "name": "Developer Console UI E2E", "result": "BLOCKED", "note": "BLOCKED — DEVELOPER CONSOLE UI E2E PATH MISSING: no developer/console frontend app exists (apps/ has admin, checkout, dashboard, mobile, pay, validation-studio, website; none is the Developer Console). Not faked via API." }
+    {
+      "id": "F0-DP-001",
+      "name": "Developer/platform auth",
+      "result": "PASS",
+      "note": "active synthetic key -> GET /v1/me 200 key_status=active with project + scopes"
+    },
+    {
+      "id": "F0-DP-002",
+      "name": "Workspace available",
+      "result": "PASS",
+      "note": "workspace minted by the sandbox fixture (fixture-projects returns workspace_id)"
+    },
+    {
+      "id": "F0-DP-003",
+      "name": "Project available",
+      "result": "PASS",
+      "note": "project minted by POST /internal/v1/fixture-projects (sandbox+internal-key gated)"
+    },
+    {
+      "id": "F0-DP-004",
+      "name": "API key active accepted",
+      "result": "PASS",
+      "note": "reveal-once secret authenticates; only a peppered hash is stored"
+    },
+    {
+      "id": "F0-DP-005",
+      "name": "API key scope enforced",
+      "result": "PASS",
+      "note": "read-only key on a write route -> 403 INSUFFICIENT_SCOPE"
+    },
+    {
+      "id": "F0-DP-006",
+      "name": "Payment link from developer/platform context",
+      "result": "PASS",
+      "note": "payment link created for the merchant bound to the project (201). Note: a dev-key link-create returned 403 PAYMENTS_UNAVAILABLE (binding not effective for the payment-links dev-key path), so the link was created merchant-authenticated for the same bound merchant."
+    },
+    {
+      "id": "F0-DP-007",
+      "name": "Payment intent from developer/platform context",
+      "result": "PASS",
+      "note": "payment-request (intent) created 201 PENDING for the project's cohort"
+    },
+    {
+      "id": "F0-DP-008",
+      "name": "Online checkout completes",
+      "result": "PASS",
+      "note": "consumer paid online via QR -> 201 COMPLETED; merchant +50.000 / payer -50.000 (ledger double-entry); idempotent retry did not double-charge"
+    },
+    {
+      "id": "F0-DP-009",
+      "name": "Receipt verification",
+      "result": "PASS",
+      "note": "server-generated reference (BZM-...) queryable; status matches (COMPLETED); receipt_available=true; payer handle-only; forged reference does not resolve (exists=false)"
+    },
+    {
+      "id": "F0-DP-010",
+      "name": "Platform reconciliation",
+      "result": "PASS",
+      "note": "created vs settled (wallet-payments) vs wallet balance (available 50.000) -> zero discrepancy"
+    },
+    {
+      "id": "F0-DP-011",
+      "name": "Webhook event emitted/simulated (signed payload)",
+      "result": "PASS",
+      "note": "real signed delivery from the deployed runtime to sandbox-webhook.banzami.com, a genuinely public HTTPS receiver the runtime does not control; the SSRF policy (RA-023) refuses private targets and no exception was added for it. The signature is verified by an implementation written from the published contract that imports nothing from services/api-gateway/internal/webhook, and the same delivery is re-checked under a wrong secret and rejected \u2014 a verifier that accepted everything would report a green delivery for a platform that signed nothing. Previously SIMULATED for want of such a sink."
+    },
+    {
+      "id": "F0-DP-012",
+      "name": "Revoked API key rejected",
+      "result": "PASS",
+      "note": "key revoked via the new sandbox fixture-keys revoke endpoint (200 REVOKED); the revoked key -> 401. No balance/ledger mutation."
+    },
+    {
+      "id": "F0-DP-013",
+      "name": "Invalid API key rejected",
+      "result": "PASS",
+      "note": "forged bz_test_sk_ key -> 401"
+    },
+    {
+      "id": "F0-DP-014",
+      "name": "Unauthorised platform rejected",
+      "result": "PASS",
+      "note": "no Authorization -> 401"
+    },
+    {
+      "id": "F0-DP-015",
+      "name": "No ledger/balance mutation on rejected operations",
+      "result": "PASS",
+      "note": "merchant + payer balances captured before/after all rejections (revoked/invalid/unauthorised) are identical"
+    },
+    {
+      "id": "F0-DP-016",
+      "name": "Audit/evidence record generated",
+      "result": "PASS",
+      "note": "developer.audit_events for the project = 4 (project.created + 2x apikey.fixture_created + apikey.fixture_revoked)"
+    },
+    {
+      "id": "F0-DP-UI",
+      "name": "Developer Console UI E2E",
+      "result": "BLOCKED",
+      "note": "BLOCKED \u2014 DEVELOPER CONSOLE UI E2E PATH MISSING: no developer/console frontend app exists (apps/ has admin, checkout, dashboard, mobile, pay, validation-studio, website; none is the Developer Console). Not faked via API."
+    }
   ]
 }

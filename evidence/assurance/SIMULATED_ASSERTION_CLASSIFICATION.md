@@ -24,28 +24,38 @@ with a no-external-egress policy, and it says so rather than pretending.
 The question is not whether the harness is honest about its own scope. It is
 whether **live signed webhook delivery has deployed proof anywhere**.
 
-Checked, not assumed. The Sandbox runs a webhook sink:
+When this was first written the answer was no. The Sandbox ran a webhook sink
+whose log held one line — `{"msg":"webhook sink listening","port":8090}` — and
+zero deliveries, and the suites that would have proved it end to end both
+required a developer project that could not yet be created.
 
-    banzami-webhook-sink   Up 4 days (healthy)   listening on 8090
+**Verdict at the time: (B) — missing deployed proof.**
 
-Its log holds exactly one line — `{"msg":"webhook sink listening","port":8090}`.
-Zero deliveries. Zero `Banza-Signature` headers observed.
+## Closed
 
-The suites that would prove it end-to-end (`webhook-lifecycle-e2e.sh`,
-`webhook-delivery-to-doa.sh`) both require an existing developer project, and
-creating one through the public lifecycle is the open P0.
+The stated ground for the simulation was that a live outbound 2xx delivery needs
+a public HTTPS sink, which the no-external policy excluded. `sandbox-webhook.banzami.com`
+is now that sink: a genuinely public HTTPS receiver, reachable exactly because
+the SSRF policy (RA-023) refuses private targets and no exception was added for
+it. The ground no longer holds, so the assertion is made for real.
 
-**Verdict: (B) — missing deployed proof.**
+`tests/phase0/developer-platform-e2e.sh` reports **pass=24 fail=0 simulated=0
+blocked=0** on the deployed Sandbox. F0-DP-011 now:
 
-Not a legitimate test-only simulation. Live signed webhook delivery has never
-been demonstrated against this runtime, and it remains a blocker until real
-deployed evidence replaces it. It is recorded here rather than left inside a
-green count, because a `simulated=1` that nobody classifies is indistinguishable
-from a gap nobody noticed.
+- registers an endpoint pointing at the public sink,
+- has a payer confirm a payment link,
+- waits for the deployed runtime to deliver on its own schedule,
+- verifies `Banza-Signature` with an implementation written from the published
+  contract that imports nothing from `services/api-gateway/internal/webhook`,
+  judged as of the moment each delivery arrived,
+- and re-checks the same delivery under a wrong secret, which must be rejected —
+  a verifier that accepted everything would report a green delivery for a
+  platform that signed nothing.
 
-## Where it gets closed
+`tools/e2e/webhooks/cap-webhook-001-sandbox-e2e.mjs` carries the wider capability
+at 55/55 with 0 blocked, including the retry schedule observed on the published
+backoff carrying the same event id.
 
-Not by a change to this suite. It closes inside the Developers P0: an ordinary
-external developer completing Financial Setup through the public lifecycle,
-registering a webhook, and the sink recording a signed delivery with a
-verifiable `Banza-Signature`. Until that journey runs, this stays open.
+There is no simulated assertion left to classify. This file stays because the
+reason it existed — that a `simulated=1` nobody classifies is indistinguishable
+from a gap nobody noticed — is worth keeping written down.

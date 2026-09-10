@@ -159,7 +159,7 @@ mkowner(){ # $1 = label -> prints merchant|source_wallet|beneficiary_wallet
            VALUES (gen_random_uuid(), 'settle-$1-$R',
                    'settle-' || gen_random_uuid() || '@projects.banzami.test', 'ACTIVE', 'APPLICATION')
            RETURNING id")
-  [ -n "$mid" ] || return 1
+  [ -n "$mid" ] || { echo "  (mkowner $1: merchant insert produced no id)" >&2; return 1; }
   e2e_own merchant "$mid"
   q "INSERT INTO merchant_compliance (merchant_id, kyb_status, aml_status)
      VALUES ('$mid','APPROVED','APPROVED')
@@ -185,9 +185,9 @@ mkowner(){ # $1 = label -> prints merchant|source_wallet|beneficiary_wallet
   # primary would have been funding the wrong account.
   local jwt acct; jwt=$(mint "$mid")
   call "$GW" 8080 POST /v1/wallet-accounts \
-    "{\"purpose\":\"CAMPAIGN\",\"reference_type\":\"SETTLEMENT_E2E\",\"reference_id\":\"src-$1-$R\",\"label\":\"settlement source $1\"}" "$jwt"
+    "{\"wallet_id\":\"$sw\",\"purpose\":\"CAMPAIGN\",\"reference_type\":\"SETTLEMENT_E2E\",\"reference_id\":\"src-$1-$R\",\"label\":\"settlement source $1\"}" "$jwt"
   acct=$(jget id)
-  [ -n "$acct" ] || return 1
+  [ -n "$acct" ] || { echo "  (mkowner $1: wallet-account create http=$CODE $(printf '%s' "$LAST" | head -c 160))" >&2; return 1; }
 
   # The gross arrives the way it really does: a payer pays a payment session
   # bound to that account. This is the leg the arithmetic in the header depends
@@ -197,7 +197,7 @@ mkowner(){ # $1 = label -> prints merchant|source_wallet|beneficiary_wallet
     "{\"wallet_account_id\":\"$acct\",\"purpose\":\"DONATION\",\"reference_type\":\"SETTLEMENT_E2E\",\"reference_id\":\"pay-$1-$R\",\"amount_minor\":$GROSS,\"currency\":\"AOA\"}" "$jwt"
   local slug
   slug=$(printf '%s' "$LAST" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const i=(j.interfaces||[]).find(x=>x.type==="PAYMENT_LINK")||(j.interfaces||[]).find(x=>x.type==="DEEP_LINK");process.stdout.write(i?String(i.value).split("/").filter(Boolean).pop():"")}catch(e){}})')
-  [ -n "$slug" ] || return 1
+  [ -n "$slug" ] || { echo "  (mkowner $1: payment-session create http=$CODE $(printf '%s' "$LAST" | head -c 160))" >&2; return 1; }
   call "$PUB" 8083 POST "/v1/payment-links/$slug/pay" "{\"amount_minor\":$GROSS}" "$PAYER_JWT"
 
   printf '%s|%s|%s|%s' "$mid" "$acct" "$ownh" "$BENEFICIARY_HANDLE"

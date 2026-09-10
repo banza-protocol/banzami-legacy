@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO payouts (\n                id, merchant_id, wallet_id, idempotency_key, status,\n                amount_minor, currency,\n                bank_account_number, bank_code, account_holder_name,\n                ledger_posting_id, failure_reason, environment, created_at\n            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Int8",
+        "Bpchar",
+        "Text",
+        "Text",
+        "Text",
+        "Uuid",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4225229860c91c45db79721ac05e6dd8a93dff6f31b2b0d2d02e8861243852f6"
+}

@@ -91,11 +91,18 @@ const SELECT: &str = "SELECT id, slug, merchant_id, wallet_id, wallet_account_id
 
 pub struct PostgresPaymentLinkRepository {
     pool: PgPool,
+    /// Resolved once from the process, never from a caller.
+    environment: banzami_types::Environment,
 }
 
 impl PostgresPaymentLinkRepository {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self { pool, environment: banzami_types::Environment::from_env() }
+    }
+
+    /// Construct with an explicit environment (tests).
+    pub fn with_environment(pool: PgPool, environment: banzami_types::Environment) -> Self {
+        Self { pool, environment }
     }
 }
 
@@ -104,8 +111,8 @@ impl PaymentLinkRepository for PostgresPaymentLinkRepository {
         sqlx::query(
             "INSERT INTO payment_links
              (id, slug, merchant_id, wallet_id, wallet_account_id, amount_minor, currency, description,
-              status, expires_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+              status, expires_at, environment, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(link.id.as_uuid())
         .bind(&link.slug)
@@ -117,6 +124,10 @@ impl PaymentLinkRepository for PostgresPaymentLinkRepository {
         .bind(&link.description)
         .bind(link.status.as_str())
         .bind(link.expires_at)
+        // Explicit, never the column default. That default is 'LIVE', so a writer
+        // that omits it does not fail — it silently records Sandbox activity as
+        // real money, which is how 272 rows came to claim the wrong universe.
+        .bind(self.environment.as_str())
         .bind(link.created_at)
         .bind(link.updated_at)
         .execute(&self.pool)

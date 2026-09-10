@@ -128,6 +128,10 @@ var (
 	ErrLastOwner   = errors.New("cannot remove or demote the last owner")
 	ErrInviteState = errors.New("invite not acceptable")
 	ErrUnavailable = errors.New("unavailable")
+	// ErrEnvironmentUndeclared: the process cannot say which financial universe
+	// it serves, so it may not write a row that has to name one. A configuration
+	// fault, surfaced rather than defaulted — the column default is 'LIVE'.
+	ErrEnvironmentUndeclared = errors.New("service environment is not declared")
 )
 
 type Workspace struct {

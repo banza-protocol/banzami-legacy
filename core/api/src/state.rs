@@ -5,36 +5,19 @@ use sqlx::PgPool;
 use banzami_types::AccountId;
 
 // ---------------------------------------------------------------------------
-// Runtime environment — controls whether sandbox/test funding is permitted.
-// Defaults to Live for safety; set ENVIRONMENT=SANDBOX on staging containers.
+// Runtime environment
+//
+// This was a second, independent definition of the same idea: its own enum, its
+// own reading of ENVIRONMENT, its own as_str(). It happened to agree with the
+// canonical one — but "happened to agree" is not a property, and the environment
+// column is a filter on proof lookup, payment listing and KYC, so two answers
+// that drift by one letter are two universes that cannot see each other.
+//
+// There is now exactly one definition, in the shared types crate, and this name
+// is kept as an alias so the ~40 existing call sites keep reading naturally.
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CoreEnvironment {
-    Live,
-    Sandbox,
-}
-
-impl CoreEnvironment {
-    pub fn from_env() -> Self {
-        match std::env::var("ENVIRONMENT").as_deref() {
-            Ok(v) if v.eq_ignore_ascii_case("SANDBOX") => CoreEnvironment::Sandbox,
-            _ => CoreEnvironment::Live, // safe default
-        }
-    }
-
-    /// Canonical string used in persisted records (e.g. wallet_payments).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            CoreEnvironment::Live => "LIVE",
-            CoreEnvironment::Sandbox => "SANDBOX",
-        }
-    }
-
-    pub fn is_live(self) -> bool {
-        self == CoreEnvironment::Live
-    }
-}
+pub type CoreEnvironment = banzami_types::Environment;
 
 // ---------------------------------------------------------------------------
 // Tests

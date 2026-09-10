@@ -55,11 +55,18 @@ struct QrRow {
 
 pub struct PostgresQrRepository {
     pool: PgPool,
+    /// Resolved once from the process, never from a caller.
+    environment: banzami_types::Environment,
 }
 
 impl PostgresQrRepository {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self { pool, environment: banzami_types::Environment::from_env() }
+    }
+
+    /// Construct with an explicit environment (tests).
+    pub fn with_environment(pool: PgPool, environment: banzami_types::Environment) -> Self {
+        Self { pool, environment }
     }
 }
 
@@ -72,8 +79,8 @@ impl QrRepository for PostgresQrRepository {
         sqlx::query(
             "INSERT INTO qr_codes
              (id, owner_id, owner_type, qr_type, currency, amount_minor, status,
-              expires_at, used_at, reference, wallet_account_id, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+              expires_at, used_at, reference, wallet_account_id, environment, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(qr.id.as_uuid())
         .bind(qr.owner_id)
@@ -86,6 +93,10 @@ impl QrRepository for PostgresQrRepository {
         .bind(qr.used_at)
         .bind(&qr.reference)
         .bind(qr.wallet_account_id)
+        // Explicit, never the column default. That default is 'LIVE', so a writer
+        // that omits it does not fail — it silently records Sandbox activity as
+        // real money, which is how 272 rows came to claim the wrong universe.
+        .bind(self.environment.as_str())
         .bind(qr.created_at)
         .execute(&self.pool)
         .await

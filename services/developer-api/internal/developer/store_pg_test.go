@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/banzami/banzami/services/common/env"
 )
 
 // devPoolOrSkip returns a real Postgres pool for the developer schema, or skips.
@@ -40,7 +42,7 @@ func TestPgStore_APIKeyLifecycle(t *testing.T) {
 	pool := devPoolOrSkip(ctx, t)
 	defer pool.Close()
 
-	svc := NewService(NewPGStore(pool), "invite-secret-fixture", "api-key-pepper-fixture", time.Hour)
+	svc := NewService(NewPGStore(pool, env.Sandbox), "invite-secret-fixture", "api-key-pepper-fixture", time.Hour)
 	svc.SetFixturesEnabled(true) // sandbox
 
 	// developer.dev_workspaces.created_by is a uuid column, so the actor id must

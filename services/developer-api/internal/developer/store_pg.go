@@ -10,13 +10,23 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/banzami/banzami/services/common/env"
 )
 
 // pgStore is the Postgres-backed developer Store (developer.* schema).
-type pgStore struct{ pool *pgxpool.Pool }
+type pgStore struct {
+	pool *pgxpool.Pool
+	// environment tags rows this store creates in environment-scoped tables.
+	// It is process configuration, not caller input: a Console user chooses what
+	// to build, never which financial universe it is built in.
+	environment env.Environment
+}
 
 // NewPGStore builds a Postgres developer Store.
-func NewPGStore(pool *pgxpool.Pool) Store { return &pgStore{pool: pool} }
+func NewPGStore(pool *pgxpool.Pool, environment env.Environment) Store {
+	return &pgStore{pool: pool, environment: environment}
+}
 
 func isUnique(err error) bool {
 	var pg *pgconn.PgError
@@ -877,12 +887,18 @@ func (s *pgStore) WebhookEndpointsForMerchant(ctx context.Context, merchantID st
 // without a key). This layer does not know which, deliberately: choosing how a
 // secret is protected is not a decision for a SQL statement.
 func (s *pgStore) CreateWebhookEndpoint(ctx context.Context, merchantID, url string, events []string, storedSecret string) (*WebhookEndpointView, error) {
+	// The environment column defaults to 'LIVE'. Omitting it here registered every
+	// Console-created endpoint as a real-money subscriber, which is both the wrong
+	// record and the wrong dispatch set.
+	if !s.environment.IsKnown() {
+		return nil, ErrEnvironmentUndeclared
+	}
 	var v WebhookEndpointView
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO webhook_endpoints (id, merchant_id, url, events, active, secret, created_at)
-		 VALUES (gen_random_uuid(), $1, $2, $3, true, $4, now())
+		`INSERT INTO webhook_endpoints (id, merchant_id, url, events, active, secret, environment, created_at)
+		 VALUES (gen_random_uuid(), $1, $2, $3, true, $4, $5, now())
 		 RETURNING id, url, events, active, created_at`,
-		merchantID, url, events, storedSecret,
+		merchantID, url, events, storedSecret, s.environment.String(),
 	).Scan(&v.ID, &v.URL, &v.Events, &v.Active, &v.CreatedAt)
 	if err != nil {
 		return nil, err

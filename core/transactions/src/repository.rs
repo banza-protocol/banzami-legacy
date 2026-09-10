@@ -107,11 +107,18 @@ struct TransactionRow {
 
 pub struct PostgresTransactionRepository {
     pool: PgPool,
+    /// Resolved once from the process, never from a caller.
+    environment: banzami_types::Environment,
 }
 
 impl PostgresTransactionRepository {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self { pool, environment: banzami_types::Environment::from_env() }
+    }
+
+    /// Construct with an explicit environment (tests).
+    pub fn with_environment(pool: PgPool, environment: banzami_types::Environment) -> Self {
+        Self { pool, environment }
     }
 }
 
@@ -128,8 +135,8 @@ impl TransactionRepository for PostgresTransactionRepository {
             "INSERT INTO transactions
              (id, idempotency_key, transaction_type, status, amount_minor, fee_minor,
               currency, merchant_id, wallet_id, description, failure_reason,
-              business_category, pricing_profile, fee_policy_ref, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+              business_category, pricing_profile, fee_policy_ref, environment, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(tx.id.as_uuid())
         .bind(&tx.idempotency_key)
@@ -145,6 +152,10 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(&tx.business_category)
         .bind(&tx.pricing_profile)
         .bind(&tx.fee_policy_ref)
+        // Explicit, never the column default. That default is 'LIVE', so a writer
+        // that omits it does not fail — it silently records Sandbox activity as
+        // real money, which is how 272 rows came to claim the wrong universe.
+        .bind(self.environment.as_str())
         .bind(tx.created_at)
         .bind(tx.updated_at)
         .execute(&self.pool)

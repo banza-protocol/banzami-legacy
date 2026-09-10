@@ -22,6 +22,11 @@ var (
 	// ErrInvalidWebhookURL is returned when a merchant-supplied webhook URL
 	// fails SSRF validation (non-https or non-public host). See webhook_ssrf.go.
 	ErrInvalidWebhookURL = errors.New("invalid webhook URL")
+	// ErrEnvironmentUndeclared is returned when the process cannot say which
+	// financial universe it serves. It is a configuration fault, not a merchant
+	// one, and it is deliberately fatal to the write rather than defaulted: the
+	// environment column decides which dispatch query sees the endpoint.
+	ErrEnvironmentUndeclared = errors.New("service environment is not declared")
 )
 
 // WebhookEndpoint is a merchant-registered delivery target.

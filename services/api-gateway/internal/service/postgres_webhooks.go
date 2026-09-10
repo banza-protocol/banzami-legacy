@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/banzami/banzami/services/api-gateway/internal/crypto"
+	"github.com/banzami/banzami/services/common/env"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -35,13 +36,19 @@ type PostgresWebhookService struct {
 	pool   *pgxpool.Pool
 	client *http.Client
 	cipher *crypto.SecretCipher // encrypts webhook signing secrets at rest (SEC-002)
+	// environment tags every endpoint this service creates. It comes from the
+	// process configuration, not from the merchant: a Sandbox endpoint that
+	// claimed to be LIVE would be selected by the LIVE dispatch query and would
+	// receive real payment events.
+	environment env.Environment
 }
 
-func NewPostgresWebhookService(pool *pgxpool.Pool, cipher *crypto.SecretCipher) *PostgresWebhookService {
+func NewPostgresWebhookService(pool *pgxpool.Pool, cipher *crypto.SecretCipher, environment env.Environment) *PostgresWebhookService {
 	return &PostgresWebhookService{
-		pool:   pool,
-		client: newSafeWebhookClient(30 * time.Second),
-		cipher: cipher,
+		pool:        pool,
+		client:      newSafeWebhookClient(30 * time.Second),
+		cipher:      cipher,
+		environment: environment,
 	}
 }
 
@@ -76,6 +83,14 @@ func (s *PostgresWebhookService) RegisterEndpoint(
 		return nil, fmt.Errorf("%w: %v", ErrInvalidWebhookURL, err)
 	}
 
+	// Fail closed on an undeclared environment. The column default is 'LIVE', so
+	// the alternative to refusing here is registering a real-money endpoint for a
+	// process that could not say which universe it serves. Registering a webhook
+	// is not urgent enough to guess.
+	if !s.environment.IsKnown() {
+		return nil, fmt.Errorf("%w: ENVIRONMENT is not set to LIVE or SANDBOX", ErrEnvironmentUndeclared)
+	}
+
 	secret := generateWebhookSecret()
 	id := uuid.NewString()
 	now := time.Now().UTC()
@@ -88,9 +103,9 @@ func (s *PostgresWebhookService) RegisterEndpoint(
 	}
 
 	_, err = s.pool.Exec(ctx,
-		`INSERT INTO webhook_endpoints (id, merchant_id, url, events, active, secret, created_at)
-		 VALUES ($1, $2, $3, $4, true, $5, $6)`,
-		id, req.MerchantID, req.URL, req.Events, storedSecret, now,
+		`INSERT INTO webhook_endpoints (id, merchant_id, url, events, active, secret, environment, created_at)
+		 VALUES ($1, $2, $3, $4, true, $5, $6, $7)`,
+		id, req.MerchantID, req.URL, req.Events, storedSecret, s.environment.String(), now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("register webhook endpoint: %w", err)

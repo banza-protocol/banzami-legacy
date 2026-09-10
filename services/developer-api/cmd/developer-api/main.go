@@ -98,7 +98,7 @@ func main() {
 	// Developer domain (workspaces, members, projects, sandbox API keys).
 	var devStore developer.Store
 	if pool != nil {
-		devStore = developer.NewPGStore(pool)
+		devStore = developer.NewPGStore(pool, env.Parse(cfg.Environment))
 	} else {
 		devStore = developer.NewMemStore()
 	}

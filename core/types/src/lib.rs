@@ -1,3 +1,5 @@
+pub mod environment;
+pub use environment::Environment;
 pub mod currency;
 pub mod ids;
 pub mod money;

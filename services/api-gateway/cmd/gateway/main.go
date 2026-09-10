@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/banzami/banzami/services/common/env"
 	"github.com/banzami/banzami/services/common/obs"
 
 	"github.com/banzami/banzami/services/api-gateway/internal/config"
@@ -122,7 +123,12 @@ func main() {
 			}
 			slog.Warn("[SEC-002] WEBHOOK_ENCRYPTION_KEY not set — webhook secrets stored in plaintext (dev/sandbox only)")
 		}
-		pgWebhook := service.NewPostgresWebhookService(dbPool, secretCipher)
+		// env.Parse, not NormaliseStackEnv. The latter accepts "production" and
+		// "staging" and maps them onto LIVE/SANDBOX, which is fine for a startup
+		// gate but wrong for a value written into a financial row: a persisted
+		// environment should record what the deployment declared, not what a
+		// synonym table inferred from it.
+		pgWebhook := service.NewPostgresWebhookService(dbPool, secretCipher, env.Parse(cfg.Environment))
 		pgWebhook.StartWorker(ctx) // background delivery worker; stops on ctx cancel
 		webhookSvc = pgWebhook
 		teamSvc = service.NewPostgresTeamService(dbPool)

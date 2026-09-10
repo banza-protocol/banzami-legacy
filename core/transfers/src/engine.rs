@@ -46,11 +46,29 @@ pub trait TransferEngine: Send + Sync {
 pub struct PostgresTransferEngine<R: TransferRepository> {
     pool: PgPool,
     repo: R,
+    /// Which financial universe rows written here belong to. Resolved once from
+    /// the process, never from a caller: a payer must not be able to choose which
+    /// universe their transfer is recorded in.
+    environment: banzami_types::Environment,
 }
 
 impl<R: TransferRepository> PostgresTransferEngine<R> {
     pub fn new(pool: PgPool, repo: R) -> Self {
-        Self { pool, repo }
+        Self::with_environment(pool, repo, banzami_types::Environment::from_env())
+    }
+
+    /// Construct with an explicit environment. Tests use this; production uses
+    /// `new`, which reads the canonical process environment.
+    pub fn with_environment(
+        pool: PgPool,
+        repo: R,
+        environment: banzami_types::Environment,
+    ) -> Self {
+        Self {
+            pool,
+            repo,
+            environment,
+        }
     }
 }
 
@@ -252,8 +270,8 @@ impl<R: TransferRepository> TransferEngine for PostgresTransferEngine<R> {
             "INSERT INTO transfers
              (id, idempotency_key, sender_id, recipient_id, amount_minor, currency,
               status, description, failure_reason, ledger_posting_id, recipient_handle,
-              created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', $7, NULL, $8, $9, $10, $10)",
+              environment, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', $7, NULL, $8, $9, $10, $11, $11)",
         )
         .bind(transfer_id.as_uuid())
         .bind(&req.idempotency_key)
@@ -264,6 +282,10 @@ impl<R: TransferRepository> TransferEngine for PostgresTransferEngine<R> {
         .bind(&req.description)
         .bind(posting_id.as_uuid())
         .bind(req.recipient_handle.as_deref())
+        // Explicit, never the column default. The default is 'LIVE', so omitting
+        // this made every Sandbox transfer assert it was real money — 41 rows
+        // before it was noticed, and invisible because nothing failed.
+        .bind(self.environment.as_str())
         .bind(now)
         .execute(&mut *db_tx)
         .await

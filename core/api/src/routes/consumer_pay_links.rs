@@ -451,8 +451,9 @@ pub async fn pay(
     sqlx::query(
         "INSERT INTO transfers
              (id, idempotency_key, sender_id, recipient_id,
-              amount_minor, currency, status, ledger_posting_id, description, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', $7, $8, $9, $9)
+              amount_minor, currency, status, ledger_posting_id, description,
+              environment, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', $7, $8, $9, $10, $10)
          ON CONFLICT (idempotency_key) DO NOTHING",
     )
     .bind(transfer_id)
@@ -463,6 +464,10 @@ pub async fn pay(
     .bind(&link.currency)
     .bind(actual_posting)
     .bind(&link.note)  // Option<String> — NULL when no note
+    // From the process, never the payer and never the column default. The default
+    // is 'LIVE', so omitting it here recorded Sandbox pay-link settlements as real
+    // money — invisible to the Sandbox proof lookup that should have found them.
+    .bind(state.environment.as_str())
     .bind(now)
     .execute(&mut *tx)
     .await

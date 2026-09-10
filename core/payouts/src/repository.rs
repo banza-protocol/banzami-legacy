@@ -112,11 +112,18 @@ fn row_to_payout(row: PayoutRow) -> Result<Payout, PayoutError> {
 
 pub struct PostgresPayoutRepository {
     pool: PgPool,
+    /// Resolved once from the process, never from a caller.
+    environment: banzami_types::Environment,
 }
 
 impl PostgresPayoutRepository {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self { pool, environment: banzami_types::Environment::from_env() }
+    }
+
+    /// Construct with an explicit environment (tests).
+    pub fn with_environment(pool: PgPool, environment: banzami_types::Environment) -> Self {
+        Self { pool, environment }
     }
 }
 
@@ -128,8 +135,8 @@ impl PayoutRepository for PostgresPayoutRepository {
                 id, merchant_id, wallet_id, idempotency_key, status,
                 amount_minor, currency,
                 bank_account_number, bank_code, account_holder_name,
-                ledger_posting_id, failure_reason, created_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                ledger_posting_id, failure_reason, environment, created_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
             "#,
             p.id.as_uuid(),
             p.merchant_id.as_uuid(),
@@ -143,6 +150,10 @@ impl PayoutRepository for PostgresPayoutRepository {
             p.destination.account_holder_name,
             p.ledger_posting_id.map(|id| id.as_uuid()),
             p.failure_reason.as_deref(),
+            // Explicit, never the column default. That default is 'LIVE', so a writer
+            // that omits it does not fail — it silently records Sandbox activity as
+            // real money, which is how 272 rows came to claim the wrong universe.
+            self.environment.as_str(),
             p.created_at,
         )
         .execute(&self.pool)

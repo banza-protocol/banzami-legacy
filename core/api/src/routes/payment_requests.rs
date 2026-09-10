@@ -314,8 +314,9 @@ pub async fn pay(
         r#"
         INSERT INTO transfers
             (id, idempotency_key, sender_id, recipient_id,
-             amount_minor, currency, status, ledger_posting_id, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', $7, $8, $8)
+             amount_minor, currency, status, ledger_posting_id,
+             environment, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', $7, $8, $9, $9)
         ON CONFLICT (idempotency_key) DO NOTHING
         "#,
         transfer_id,
@@ -325,6 +326,10 @@ pub async fn pay(
         req.amount_minor,
         req.currency,
         actual_posting,
+        // From the process, never the requester. A payment request is initiated by
+        // one consumer and paid by another; neither of them gets to say which
+        // financial universe the resulting transfer belongs to.
+        state.environment.as_str(),
         now,
     )
     .execute(&state.pool)

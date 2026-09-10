@@ -42,9 +42,32 @@
 # the canonical pricing model. The old code named a business vertical and a rate; a profile
 # names a commercial policy, and its per-operation rules name what that policy
 # charges. The rate here is unchanged — only the identity is stable now.
+#
+# THE CONTRACT THIS SPEAKS
+#
+# It used to POST source_wallet_id / beneficiary_wallet_id /
+# application_fee_wallet_id. That shape has no route — /v1/application-settlements
+# is served by CreateBusiness, which takes a segregated ACCOUNT id and two @banza
+# names. Every run answered 400, and every economic assertion below it was
+# reported as a settlement that produced no fee. The harness that exists to prove
+# the operator charges its rate had been proving nothing for as long as the two
+# shapes disagreed.
+#
+# The parties are now named the way the contract names them, so what is asserted
+# is what an integrator actually gets:
+#
+#   source        a CAMPAIGN account the caller owns, credited by a real payment
+#   beneficiary   a @banza — a consumer, because a settlement pays a person
+#   fee dest      the caller's OWN @banza; ADR-028 refuses anyone else's
+#
+# And the gross is put there by a payer paying a payment session, not by an
+# admin credit to the wallet's primary account. A settlement refuses a PRIMARY
+# source, so funding one would have been funding the wrong account — and the
+# gross-credit leg is half the arithmetic this file describes.
 set -uo pipefail
 
 GW=$(docker ps  --format '{{.Names}}' | grep api-gateway-staging | head -1)
+PUB=$(docker ps --format '{{.Names}}' | grep public-api-staging  | head -1)
 CORE=$(docker ps --format '{{.Names}}'| grep core-api-staging    | head -1)
 PG=$(docker ps  --format '{{.Names}}' | grep postgres | grep bzsandbox | head -1)
 [ -n "$CORE" ] && [ -n "$GW" ] || { echo "NO_CONTAINERS"; exit 1; }
@@ -70,10 +93,21 @@ call(){ local ct="$1" port="$2" m="$3" p="$4" bd="$5" au="${6:--}"
   else a+=(-H "Content-Type: application/json" --data @-); r=$(printf '%s' "$bd" | docker exec -i "$ct" "${a[@]}" 2>/dev/null); fi
   CODE=$(printf '%s' "$r" | tail -n1); LAST=$(printf '%s' "$r" | sed '$d'); }
 jget(){ printf '%s' "$LAST" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s)["'"$1"'"]??""))}catch(e){}})'; }
-mint(){ SECRET="$JWTSEC" M="$1" node -e 'const c=require("crypto");const b=o=>Buffer.from(typeof o==="string"?o:JSON.stringify(o)).toString("base64url");const n=Math.floor(Date.now()/1000);const cl={merchant_id:process.env.M,scopes:["*"],environment:"SANDBOX",iat:n,exp:n+900};const h=b({alg:"HS256",typ:"JWT"}),p=b(cl);process.stdout.write(h+"."+p+"."+c.createHmac("sha256",process.env.SECRET).update(h+"."+p).digest("base64url"));'; }
+mint(){ SECRET="$JWTSEC" K=merchant_id V="$1" node -e 'const c=require("crypto");const b=o=>Buffer.from(typeof o==="string"?o:JSON.stringify(o)).toString("base64url");const n=Math.floor(Date.now()/1000);const cl={scopes:["*"],environment:"SANDBOX",iat:n,exp:n+900};cl[process.env.K]=process.env.V;const h=b({alg:"HS256",typ:"JWT"}),p=b(cl);process.stdout.write(h+"."+p+"."+c.createHmac("sha256",process.env.SECRET).update(h+"."+p).digest("base64url"));'; }
+mintc(){ SECRET="$JWTSEC" K=customer_id V="$1" node -e 'const c=require("crypto");const b=o=>Buffer.from(typeof o==="string"?o:JSON.stringify(o)).toString("base64url");const n=Math.floor(Date.now()/1000);const cl={scopes:["*"],environment:"SANDBOX",iat:n,exp:n+900};cl[process.env.K]=process.env.V;const h=b({alg:"HS256",typ:"JWT"}),p=b(cl);process.stdout.write(h+"."+p+"."+c.createHmac("sha256",process.env.SECRET).update(h+"."+p).digest("base64url"));'; }
 
 wbal(){ q "SELECT COALESCE(SUM(CASE WHEN entry_type='CREDIT' THEN amount_minor ELSE -amount_minor END),0)
              FROM ledger_entries WHERE account_id=(SELECT available_account_id FROM wallets WHERE id='$1')"; }
+# A segregated account's balance, read from the ledger account it maps to.
+abal(){ q "SELECT COALESCE(SUM(CASE WHEN e.entry_type='CREDIT' THEN e.amount_minor ELSE -e.amount_minor END),0)
+             FROM ledger_entries e
+            WHERE e.account_id=(SELECT account_id FROM wallet_accounts WHERE id='$1')"; }
+# A consumer's own available balance, by @banza.
+hbal(){ q "SELECT COALESCE(SUM(CASE WHEN e.entry_type='CREDIT' THEN e.amount_minor ELSE -e.amount_minor END),0)
+             FROM ledger_entries e
+            WHERE e.account_id=(SELECT w.available_account_id FROM consumer_wallets w
+                                  JOIN consumers c ON c.id=w.consumer_id
+                                 WHERE c.handle='$1' AND w.status='ACTIVE' LIMIT 1)"; }
 unbalanced(){ q "SELECT COUNT(*) FROM (SELECT p.id FROM ledger_postings p
                     JOIN ledger_entries e ON e.posting_id=p.id GROUP BY p.id
                    HAVING SUM(CASE e.entry_type WHEN 'DEBIT' THEN -e.amount_minor ELSE e.amount_minor END) <> 0) x"; }
@@ -86,6 +120,32 @@ EXPECTED_NET=$(( GROSS - EXPECTED_FEE ))
 
 echo "### the arithmetic under test: gross $GROSS @ ${RATE_BPS}bps -> fee $EXPECTED_FEE, net $EXPECTED_NET"
 chk LEDGER_SOUND_BEFORE "$(unbalanced)" "0"
+
+# ── one payer, one beneficiary, shared by both cases ────────────────────────
+# Shared deliberately: the parity assertion compares two owners, and giving each
+# its own payer would let a funding difference masquerade as an economic one.
+onboard(){ # $1 = handle-ish suffix -> prints consumer_id
+  local ph="+2449${R:0:4}$1" h="se${R:0:4}$1" sid
+  call "$PUB" 8083 POST /v1/consumer/onboarding/start \
+    "{\"phone_number\":\"$ph\",\"currency\":\"AOA\",\"otp_plaintext_for_test\":\"123456\"}" -
+  sid=$(jget session_id)
+  call "$PUB" 8083 POST /v1/consumer/onboarding/verify-otp "{\"session_id\":\"$sid\",\"otp_code\":\"123456\"}" -
+  call "$PUB" 8083 POST /v1/consumer/onboarding/complete \
+    "{\"session_id\":\"$sid\",\"banza_handle\":\"$h\",\"pin\":\"1234\"}" -
+  printf '%s|%s' "$(jget consumer_id)" "$h"
+}
+
+IFS='|' read -r PAYER_ID PAYER_HANDLE <<<"$(onboard 71)"
+PAYER_JWT=$(mintc "$PAYER_ID")
+call "$GW" 8080 POST /v1/compliance/customers/verify \
+  "{\"full_name\":\"SETTLEMENT ECONOMICS\",\"document_type\":\"BILHETE_DE_IDENTIDADE\",\"document_number\":\"SE$R\",\"date_of_birth\":\"1990-01-01\",\"requested_level\":\"BASIC\"}" "$PAYER_JWT"
+# Enough for both cases plus headroom; a short payer reads as a settlement fault.
+call "$PUB" 8083 POST /v1/sandbox/fund "{\"amount_minor\":$(( GROSS * 3 )),\"currency\":\"AOA\"}" "$PAYER_JWT"
+chk PAYER_FUNDED "$([ "$(hbal "$PAYER_HANDLE")" -ge "$(( GROSS * 2 ))" ] && echo yes)" yes
+
+IFS='|' read -r BENEFICIARY_ID BENEFICIARY_HANDLE <<<"$(onboard 72)"
+chk BENEFICIARY_READY "$([ -n "$BENEFICIARY_HANDLE" ] && echo yes)" yes
+BENEFICIARY_START=$(hbal "$BENEFICIARY_HANDLE")
 
 # An owner on the generic 200-bps profile, with a wallet holding gross.
 mkowner(){ # $1 = label -> prints merchant|source_wallet|beneficiary_wallet
@@ -111,34 +171,55 @@ mkowner(){ # $1 = label -> prints merchant|source_wallet|beneficiary_wallet
   # wallets_merchant_id_currency_key and leaves the beneficiary empty — which
   # then reads as a settlement failure rather than as a fixture that cannot
   # express what it is describing.
-  local ben
-  ben=$(q "INSERT INTO merchants (id, name, email, status, business_account_type)
-           VALUES (gen_random_uuid(), 'settle-$1-ben-$R',
-                   'settle-ben-' || gen_random_uuid() || '@projects.banzami.test', 'ACTIVE', 'APPLICATION')
-           RETURNING id")
-  e2e_own merchant "$ben"
-  call "$CORE" 8081 POST /internal/v1/wallets "{\"merchant_id\":\"$ben\",\"currency\":\"AOA\"}"; bw=$(jget id)
-  # Stands in for the payment leg, which credits GROSS by design. The real
-  # payment leg is proved by doa-public-donation-e2e.sh.
-  call "$CORE" 8081 POST "/internal/v1/wallets/$sw/admin-credit" \
-    "{\"amount_minor\":$GROSS,\"reason\":\"settlement economics harness $R\"}"
-  printf '%s|%s|%s' "$mid" "$sw" "$bw"
+  # The settling owner must be NAMEABLE. ADR-028 requires the application fee to
+  # land in the caller's OWN business account, and the contract names it by
+  # @banza — so without a handle the owner cannot be its own fee destination and
+  # the settlement is refused for a reason that has nothing to do with pricing.
+  local ownh
+  ownh=$(printf 's%s' "$(printf '%s' "$mid" | tr -d '-' | cut -c1-11)" | tr 'A-Z' 'a-z')
+  q "INSERT INTO handle_registry (handle, owner_type, owner_id, created_at)
+     VALUES ('$ownh','MERCHANT','$mid', now()) ON CONFLICT (handle) DO NOTHING" >/dev/null
+
+  # A segregated CAMPAIGN account, because settlement moves funds OUT of one and
+  # refuses the PRIMARY. That refusal is the segregation working, so funding the
+  # primary would have been funding the wrong account.
+  local jwt acct; jwt=$(mint "$mid")
+  call "$GW" 8080 POST /v1/wallet-accounts \
+    "{\"purpose\":\"CAMPAIGN\",\"reference_type\":\"SETTLEMENT_E2E\",\"reference_id\":\"src-$1-$R\",\"label\":\"settlement source $1\"}" "$jwt"
+  acct=$(jget id)
+  [ -n "$acct" ] || return 1
+
+  # The gross arrives the way it really does: a payer pays a payment session
+  # bound to that account. This is the leg the arithmetic in the header depends
+  # on — the wallet holds the FULL amount, and the operator's rate is charged
+  # one step later, at the settlement.
+  call "$GW" 8080 POST /v1/payment-sessions \
+    "{\"wallet_account_id\":\"$acct\",\"purpose\":\"DONATION\",\"reference_type\":\"SETTLEMENT_E2E\",\"reference_id\":\"pay-$1-$R\",\"amount_minor\":$GROSS,\"currency\":\"AOA\"}" "$jwt"
+  local slug
+  slug=$(printf '%s' "$LAST" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const i=(j.interfaces||[]).find(x=>x.type==="PAYMENT_LINK")||(j.interfaces||[]).find(x=>x.type==="DEEP_LINK");process.stdout.write(i?String(i.value).split("/").filter(Boolean).pop():"")}catch(e){}})')
+  [ -n "$slug" ] || return 1
+  call "$PUB" 8083 POST "/v1/payment-links/$slug/pay" "{\"amount_minor\":$GROSS}" "$PAYER_JWT"
+
+  printf '%s|%s|%s|%s' "$mid" "$acct" "$ownh" "$BENEFICIARY_HANDLE"
 }
 
-settle(){ # $1=merchant $2=source_wallet $3=beneficiary_wallet $4=idem -> sets CODE, LAST
+settle(){ # $1=merchant $2=source_account $3=beneficiary_@banza $4=idem $5=own_@banza
   local jwt; jwt=$(mint "$1")
   call "$GW" 8080 POST /v1/application-settlements \
-    "{\"idempotency_key\":\"settle-$4-$R\",\"owner_ref\":\"owner-$4-$R\",\"source_wallet_id\":\"$2\",\"beneficiary_wallet_id\":\"$3\",\"application_fee_wallet_id\":\"$2\"}" "$jwt"
+    "{\"idempotency_key\":\"settle-$4-$R\",\"source_account_id\":\"$2\",\"beneficiary_banza_name\":\"$3\",\"fee_destination_banza_name\":\"$5\",\"reason\":\"CAMPAIGN_CLOSE\",\"reference_type\":\"SETTLEMENT_E2E\",\"reference_id\":\"ref-$4-$R\"}" "$jwt"
 }
 
 run_case(){ # $1 = label
-  local label="$1" mid sw bw
-  IFS='|' read -r mid sw bw <<<"$(mkowner "$label")"
-  chk "${label}_OWNER_READY" "$([ -n "$mid" ] && [ -n "$sw" ] && [ -n "$bw" ] && echo yes)" yes
+  local label="$1" mid acct ownh benh before
+  IFS='|' read -r mid acct ownh benh <<<"$(mkowner "$label")"
+  chk "${label}_OWNER_READY" "$([ -n "$mid" ] && [ -n "$acct" ] && [ -n "$ownh" ] && [ -n "$benh" ] && echo yes)" yes
   chk "${label}_PROFILE_ASSIGNED" "$(q "SELECT p.code FROM merchants m JOIN pricing_profiles p ON p.id=m.pricing_profile_id WHERE m.id='$mid'")" "sandbox-reference"
-  chk "${label}_WALLET_HOLDS_GROSS" "$(wbal "$sw")" "$GROSS"
+  # The campaign account holds the FULL amount: the payment leg is neutral, and
+  # the operator's rate is charged one step later.
+  chk "${label}_CAMPAIGN_HOLDS_GROSS" "$(abal "$acct")" "$GROSS"
 
-  settle "$mid" "$sw" "$bw" "$label"
+  before=$(hbal "$benh")
+  settle "$mid" "$acct" "$benh" "$label" "$ownh"
   chk "${label}_SETTLEMENT_ACCEPTED" "$CODE" "201"
   local sid; sid=$(jget id)
 
@@ -150,13 +231,16 @@ run_case(){ # $1 = label
   chk "${label}_FEE" "$fee" "$EXPECTED_FEE"
   chk "${label}_NET" "$net" "$EXPECTED_NET"
   chk "${label}_RULE_ATTRIBUTED" "$(q "SELECT (pricing_rule_id IS NOT NULL)::text FROM app_settlements WHERE id='$sid'")" "true"
-  chk "${label}_BENEFICIARY_GETS_NET" "$(wbal "$bw")" "$EXPECTED_NET"
-  # The net leaves the source; the fee stays in it, because the settling owner's
-  # own wallet is the fee destination — a merchant holds one wallet per currency,
-  # so there is no second one to send it to. This asserted 0, from when the fee
-  # went elsewhere, and a stale assertion about where money ends up is exactly
-  # the kind that stops being read.
-  chk "${label}_SOURCE_RETAINS_ONLY_THE_FEE" "$(wbal "$sw")" "$EXPECTED_FEE"
+  chk "${label}_BENEFICIARY_GETS_NET" "$(( $(hbal "$benh") - before ))" "$EXPECTED_NET"
+  # The campaign account is emptied: net to the beneficiary, fee to the owner's
+  # own business account. Nothing is left behind, which is what closing a
+  # campaign means.
+  chk "${label}_SOURCE_EMPTIED" "$(abal "$acct")" "0"
+  # And the fee is where ADR-028 says it must be — the caller's own account,
+  # named by the caller's own @banza.
+  chk "${label}_FEE_TO_OWN_ACCOUNT" "$(q "SELECT COALESCE(SUM(CASE WHEN e.entry_type='CREDIT' THEN e.amount_minor ELSE -e.amount_minor END),0)
+        FROM ledger_entries e WHERE e.posting_id=(SELECT fee_posting_id FROM app_settlements WHERE id='$sid')
+          AND e.account_id=(SELECT available_account_id FROM wallets WHERE merchant_id='$mid')")" "$EXPECTED_FEE"
   # Record for the parity comparison.
   printf '%s' "$fee" > "/tmp/fee-$label-$R"
   printf '%s' "$net" > "/tmp/net-$label-$R"

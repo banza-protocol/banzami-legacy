@@ -212,6 +212,36 @@ write_devkey_secrets() {
   keep_or_mint "$OTP_FILE"           otp_pepper
 }
 
+# ensure_proof_signing_key — the operator key that makes a public proof an
+# attestation rather than a row.
+#
+# A transaction proof carries an HMAC over its canonical payload. Unkeyed, that
+# HMAC is computable by anyone who knows the format, so it proves nothing — and
+# the gateway's own SEC-003 gate says so, refusing to start in LIVE without it
+# while warning and continuing in Sandbox. The Sandbox warned and continued for
+# its whole life, so every receipt on a public surface real people download was
+# going to be signed with the empty key.
+#
+# Kept once provisioned, and deliberately NOT rotated by BZSB_ROTATE_SECRETS.
+# Every other credential here can be rotated with a known cost — reissue keys,
+# sign everyone out. This one cannot: a proof is an immutable public record, and
+# a new key does not invalidate a session, it invalidates the operator's
+# signature on every receipt ever issued. Rotating it is a decision that needs a
+# re-signing plan, not a flag.
+#
+# It is mounted into every service that already holds credentials rather than
+# into the gateway alone, matching how every shared secret here is delivered.
+# Only the gateway reads it.
+ensure_proof_signing_key() { # <secret_dir>
+  local d="$1" f="$1/bzm_proof_signing_key"
+  [ -d "$d" ] || return 0
+  if [ ! -s "$f" ]; then
+    printf '%s%s' "$(uuid)" "$(uuid)" | tr -d '-' > "$f"
+    echo "  bzm_proof_signing_key minted"
+  fi
+  chmod 0644 "$f"
+}
+
 deploy_one() { # <name> <port> <binary> <tag>
   local name="$1" port="$2" bin="$3" tag="$4" cname="${BZSB_PROJECT}-$name"
   # The gateway resolves the Developer API by its canonical in-cluster host
@@ -562,6 +592,15 @@ cmd_deploy_one() {
   case "$rp" in ''|no) : ;; *) run+=(--restart "$rp") ;; esac
   [ "$name" = developer-api ] && run+=(--network-alias developer-api)
   local x; while IFS= read -r x; do [ -n "$x" ] && run+=(-v "$x"); done < <(docker inspect -f '{{range .HostConfig.Binds}}{{println .}}{{end}}' "$cname")
+  # A NEW secret cannot arrive by cloning: the loop above copies the
+  # predecessor's mounts, and the predecessor does not have one. Added
+  # explicitly, and only for a service that already holds credentials, so an
+  # application-plane container stays credential-free.
+  if [ -n "$sd" ] && [ -d "$sd" ]; then
+    ensure_proof_signing_key "$sd"
+    printf '%s\n' "${run[@]}" | grep -q '/run/secrets/bzm_proof_signing_key' \
+      || run+=(-v "$sd/bzm_proof_signing_key:/run/secrets/bzm_proof_signing_key:ro")
+  fi
   # Clone the previous container's env EXCEPT anything the new image is the
   # authority on. BANZAMI_BUILD_COMMIT is baked into each image by the build
   # (ARG -> ENV); re-applying the previous container's value as an explicit -e
@@ -611,7 +650,7 @@ cmd_deploy_one() {
   # One value on both sides, named for what it authorises at each end: the
   # Gateway reads INTERNAL_API_KEY to decide whether to accept an internal call,
   # admin-api reads STAGING_INTERNAL_API_KEY to decide what to send.
-  local ep='for s in db_url:DATABASE_URL jwt_secret:JWT_SECRET core_internal_key:CORE_INTERNAL_KEY core_internal_key:CORE_REFUND_KEY api_key_pepper:API_KEY_PEPPER developer_internal_key:DEVELOPER_INTERNAL_KEY core_payee_validation_key:CORE_PAYEE_VALIDATION_KEY session_secret:SESSION_SECRET otp_pepper:OTP_PEPPER admin_jwt_secret:ADMIN_JWT_SECRET resend_api_key:RESEND_API_KEY core_internal_key:INTERNAL_API_KEY core_internal_key:STAGING_INTERNAL_API_KEY; do f="/run/secrets/${s%%:*}"; v="${s##*:}"; [ -f "$f" ] && export "$v"="$(cat "$f")"; done; exec '"$bin"
+  local ep='for s in db_url:DATABASE_URL jwt_secret:JWT_SECRET core_internal_key:CORE_INTERNAL_KEY core_internal_key:CORE_REFUND_KEY api_key_pepper:API_KEY_PEPPER developer_internal_key:DEVELOPER_INTERNAL_KEY core_payee_validation_key:CORE_PAYEE_VALIDATION_KEY session_secret:SESSION_SECRET otp_pepper:OTP_PEPPER admin_jwt_secret:ADMIN_JWT_SECRET resend_api_key:RESEND_API_KEY core_internal_key:INTERNAL_API_KEY core_internal_key:STAGING_INTERNAL_API_KEY bzm_proof_signing_key:BZM_PROOF_SIGNING_KEY; do f="/run/secrets/${s%%:*}"; v="${s##*:}"; [ -f "$f" ] && export "$v"="$(cat "$f")"; done; exec '"$bin"
   docker rm -f "$cname" >/dev/null 2>&1 || true   # single-service swap (nothing else pruned)
   "${run[@]}" --entrypoint sh "$tag" -c "$ep" >/dev/null 2>&1 || { echo "  $name docker run FAIL"; return 1; }
   local i; for i in "${nets[@]:1}"; do docker network connect "$i" "$cname" >/dev/null 2>&1 || true; done

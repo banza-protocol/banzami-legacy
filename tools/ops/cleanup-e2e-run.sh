@@ -81,9 +81,10 @@ for r in $RUNS; do
   # never drift apart into two behaviours.
   E2E_RUN_ID="$r"
   E2E_MANIFEST="$M"
-  E2E_GW=$(docker ps  --format '{{.Names}}' | grep api-gateway-staging | head -1)
-  E2E_DEV=$(docker ps --format '{{.Names}}' | grep developer-api       | head -1)
-  E2E_INTKEY=$(docker exec "$E2E_DEV" sh -c 'cat /run/secrets/developer_internal_key 2>/dev/null')
-  E2E_JWTSEC=$(docker exec "$E2E_GW"  sh -c 'cat /run/secrets/jwt_secret 2>/dev/null')
+  # The same discovery the run itself does, not a subset of it. This used to be
+  # a hand-copied four lines missing the database context that retirement reads,
+  # so recovery either died on an unbound variable or silently decided every
+  # link was already terminal.
+  e2e_discover
   e2e_end
 done

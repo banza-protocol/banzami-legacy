@@ -61,6 +61,25 @@
 
 E2E_STATE_DIR="${E2E_STATE_DIR:-/var/tmp/banzami-e2e}"
 
+# ── context ─────────────────────────────────────────────────────────────────
+# Everything retirement needs, discovered in ONE place.
+#
+# The recovery path (tools/ops/cleanup-e2e-run.sh) used to assemble its own
+# subset and left out E2E_PG / E2E_CORE / E2E_PW. Retirement reads the database
+# to decide whether a link is still live, so under `set -u` recovery died on an
+# unbound variable — and without it, e2e_sql returned empty, which reads as
+# "not ACTIVE", which reads as "nothing to retire". A live payable fixture URL
+# would have been reported as cleaned up. Two callers, one context.
+e2e_discover() {
+  E2E_PG=$(docker ps   --format '{{.Names}}' | grep postgres | grep bzsandbox | head -1)
+  E2E_CORE=$(docker ps --format '{{.Names}}' | grep core-api-staging | head -1)
+  E2E_PW=$(docker exec "$E2E_CORE" sh -c 'cat /run/secrets/db_url 2>/dev/null' 2>/dev/null | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#')
+  E2E_GW=$(docker ps  --format '{{.Names}}' | grep api-gateway-staging | head -1)
+  E2E_DEV=$(docker ps --format '{{.Names}}' | grep developer-api       | head -1)
+  E2E_INTKEY=$(docker exec "$E2E_DEV" sh -c 'cat /run/secrets/developer_internal_key 2>/dev/null' 2>/dev/null)
+  E2E_JWTSEC=$(docker exec "$E2E_GW"  sh -c 'cat /run/secrets/jwt_secret 2>/dev/null' 2>/dev/null)
+}
+
 # ── identity ────────────────────────────────────────────────────────────────
 e2e_begin() {
   E2E_RUN_ID="${E2E_RUN_ID:-$(date +%s)$$}"
@@ -69,13 +88,7 @@ e2e_begin() {
   E2E_MANIFEST="$E2E_STATE_DIR/$E2E_RUN_ID.tsv"
   : > "$E2E_MANIFEST"
 
-  E2E_PG=$(docker ps   --format '{{.Names}}' | grep postgres | grep bzsandbox | head -1)
-  E2E_CORE=$(docker ps --format '{{.Names}}' | grep core-api-staging | head -1)
-  E2E_PW=$(docker exec "$E2E_CORE" sh -c 'cat /run/secrets/db_url 2>/dev/null' 2>/dev/null | sed -E 's#.*://[^:]+:([^@]+)@.*#\1#')
-  E2E_GW=$(docker ps  --format '{{.Names}}' | grep api-gateway-staging | head -1)
-  E2E_DEV=$(docker ps --format '{{.Names}}' | grep developer-api       | head -1)
-  E2E_INTKEY=$(docker exec "$E2E_DEV" sh -c 'cat /run/secrets/developer_internal_key 2>/dev/null' 2>/dev/null)
-  E2E_JWTSEC=$(docker exec "$E2E_GW"  sh -c 'cat /run/secrets/jwt_secret 2>/dev/null' 2>/dev/null)
+  e2e_discover
 
   # A trap on EXIT alone misses Ctrl-C in some shells and misses TERM always.
   trap 'e2e_end' EXIT
@@ -149,7 +162,24 @@ e2e_end() {
             code=$(e2e_http "$E2E_GW" 8080 DELETE "/v1/payment-links/$lid" "Authorization: Bearer $(e2e_jwt merchant_id "$owner")")
           else code=204; fi ;;
         payment_link)
-          code=$(e2e_http "$E2E_GW" 8080 DELETE "/v1/payment-links/$id" "Authorization: Bearer $(e2e_jwt merchant_id "$owner")") ;;
+          # Only an ACTIVE link holds live authority. A USED one has already
+          # been paid and cannot be expired — the API refuses with 422, which is
+          # the API being right, not the cleanup failing. Counting that as a
+          # failure meant every run that actually paid a link ended with a red
+          # line and a kept manifest, which is how an alarm stops being read.
+          #
+          # Same reasoning as the payment_session branch above, which already
+          # said so and then only applied it to itself.
+          # Fail OPEN toward deleting, not toward assuming terminal: an
+          # unreadable status must attempt the delete, because the cost of a
+          # needless 422 is a log line and the cost of a wrong "already
+          # terminal" is a live payable URL nobody is watching.
+          case "$(e2e_sql "select status from payment_links where id = '$id'")" in
+            USED|EXPIRED|CANCELLED)
+              code=204 ;;
+            *)
+              code=$(e2e_http "$E2E_GW" 8080 DELETE "/v1/payment-links/$id" "Authorization: Bearer $(e2e_jwt merchant_id "$owner")") ;;
+          esac ;;
         webhook_endpoint)
           code=$(e2e_http "$E2E_GW" 8080 DELETE "/v1/webhooks/endpoints/$id" "Authorization: Bearer $(e2e_jwt merchant_id "$owner")") ;;
         merchant_key)

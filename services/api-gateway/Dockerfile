@@ -13,6 +13,11 @@ WORKDIR /app/api-gateway
 RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -o /app/bin/api-gateway ./cmd/gateway
+# The historical proof backfill ships in this image rather than in one of its
+# own: it needs the operator signing key and the same proof implementation, and
+# both live here. It runs as a one-shot container, never as a service.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /app/bin/backfill-proofs ./cmd/backfill-proofs
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM alpine:3.21 AS runtime
@@ -23,6 +28,7 @@ RUN apk --no-cache add ca-certificates curl \
 ENV BANZAMI_CHROME_BIN=/usr/bin/chromium-browser
 
 COPY --from=builder /app/bin/api-gateway /usr/local/bin/api-gateway
+COPY --from=builder /app/bin/backfill-proofs /usr/local/bin/backfill-proofs
 
 # Run as an unprivileged user (Assurance RA-024 — container hardening).
 RUN addgroup -S banzami && adduser -S -G banzami -H -s /sbin/nologin banzami

@@ -313,6 +313,79 @@ func (s *ProofService) MarkReversed(ctx context.Context, transactionID, environm
 // A subsequent call with a terminal-negative status (e.g. REVERSED) updates the
 // stored proof forward — see the status re-sync in the body.
 func (s *ProofService) Ensure(ctx context.Context, in ProofInput) (*Proof, error) {
+	mint := s.newReference
+	if mint == nil {
+		mint = secureReference
+	}
+	return s.ensureWith(ctx, in, mint, maxReferenceAttempts)
+}
+
+// legacyReference reconstructs the reference the retired receipt generators
+// printed: "BZM-" + the first eight hex symbols of the object id, in two groups.
+//
+// It is here, next to the current generator, because this file is the one place
+// allowed to construct a BZM- value — a guard that exists precisely because four
+// other places once did. Nothing new is ever minted this way; see
+// EnsureHistorical for the only caller and the reason it must exist.
+func legacyReference(objectID string) string {
+	hex := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(objectID), "-", ""))
+	if len(hex) < 8 {
+		return ""
+	}
+	return "BZM-" + hex[0:4] + "-" + hex[4:8]
+}
+
+// ErrHistoricalNotSandbox refuses to materialise a legacy-referenced proof
+// outside the Sandbox.
+var ErrHistoricalNotSandbox = errors.New("historical proof materialisation is Sandbox-only")
+
+// ErrHistoricalReferenceTaken means the legacy reference this record must carry
+// already belongs to a different proof.
+var ErrHistoricalReferenceTaken = errors.New("the legacy reference for this record is already held by another proof")
+
+// EnsureHistorical materialises the proof that should have existed for a record
+// predating proof minting.
+//
+// Between the receipt feature shipping and the proof service being wired, four
+// receipt generators printed a reference derived from the object id and never
+// minted anything behind it. Those PDFs are in people's hands and their QR codes
+// resolve to "does not exist or may have been forged" — BZM-F993-38E2 is one.
+// Reconstructing the proof from the ledger is the only way those documents ever
+// become verifiable again; issuing them a fresh SECURE_V1 reference would leave
+// the printed one dead forever.
+//
+// Two constraints make this narrow enough to be safe:
+//
+//   - The reference is DERIVED from the source object id, never supplied. A
+//     caller that could choose a public reference could mint one that collides
+//     with — or impersonates — a proof that already exists.
+//   - Sandbox only. A LEGACY_HEX_V0 reference carries ~32 bits and is refused by
+//     the public lookup outside the Sandbox anyway, so writing one as LIVE would
+//     create a row nothing can read.
+//
+// There is no retry: a legacy reference has exactly one possible value, so a
+// collision is a fact to report, not a dice roll to re-throw.
+func (s *ProofService) EnsureHistorical(ctx context.Context, sourceID string, in ProofInput) (*Proof, error) {
+	if !strings.EqualFold(strings.TrimSpace(in.Environment), "SANDBOX") {
+		return nil, ErrHistoricalNotSandbox
+	}
+	ref := legacyReference(sourceID)
+	if ClassifyReference(ref) != ReferenceLegacyV0 {
+		return nil, fmt.Errorf("%q does not derive a legacy reference", sourceID)
+	}
+	p, err := s.ensureWith(ctx, in, func() (string, error) { return ref, nil }, 1)
+	if err != nil && proofReferenceCollision(err) {
+		return nil, fmt.Errorf("%w: %s", ErrHistoricalReferenceTaken, ref)
+	}
+	return p, err
+}
+
+func (s *ProofService) ensureWith(
+	ctx context.Context,
+	in ProofInput,
+	mint func() (string, error),
+	maxAttempts int,
+) (*Proof, error) {
 	if in.Environment == "" {
 		in.Environment = "LIVE"
 	}
@@ -343,10 +416,6 @@ func (s *ProofService) Ensure(ctx context.Context, in ProofInput) (*Proof, error
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		ON CONFLICT (transaction_id, environment) DO NOTHING`
 
-	mint := s.newReference
-	if mint == nil {
-		mint = secureReference
-	}
 	for attempt := 1; ; attempt++ {
 		ref, rerr := mint()
 		if rerr != nil {
@@ -365,8 +434,12 @@ func (s *ProofService) Ensure(ctx context.Context, in ProofInput) (*Proof, error
 		if !proofReferenceCollision(err) {
 			return nil, err
 		}
-		if attempt >= maxReferenceAttempts {
-			return nil, fmt.Errorf("could not mint a unique proof reference after %d attempts", maxReferenceAttempts)
+		if attempt >= maxAttempts {
+			if maxAttempts == 1 {
+				// The caller's reference is fixed, so there is nothing to re-roll.
+				return nil, err
+			}
+			return nil, fmt.Errorf("could not mint a unique proof reference after %d attempts", maxAttempts)
 		}
 	}
 	// Whether we inserted or lost the race, the row now exists — read it back.

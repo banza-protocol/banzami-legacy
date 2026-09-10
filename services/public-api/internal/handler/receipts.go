@@ -76,8 +76,6 @@ func handleOf(c *service.ConsumerRecord) string {
 	return c.Handle
 }
 
-// reference derives a human, verifiable reference from a transfer UUID:
-// BZM-XXXX-XXXX (first 8 hex chars, uppercased).
 // GET /v1/consumer/transactions/{id}/receipt.pdf
 func (h *ReceiptHandler) ConsumerReceipt(w http.ResponseWriter, r *http.Request) {
 	consumer, ok := middleware.GetConsumer(r.Context())

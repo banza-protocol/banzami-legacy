@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-10
+
+### Removed — `applicationFeeBps` on `createBusinessApplicationSettlement`
+
+**Breaking.** The field is gone from `CreateBusinessApplicationSettlementParams`
+and the SDK no longer sends `application_fee_bps`, even if a JavaScript caller
+passes it.
+
+It used to work, which was the problem. A non-zero value made the operator skip
+its own pricing entirely and charge whatever the caller asked for, up to 50%. A
+caller cannot set the price of the service it is buying, so the rate now comes
+from the pricing profile Banzami assigned to your business, and the operator
+ignores the field on the wire.
+
+To upgrade: delete the `applicationFeeBps` line. Nothing else changes. Keep
+naming `feeDestinationBanzaName` whenever your business can receive a fee —
+you no longer know from your own request whether one will be charged, so do not
+gate the destination on a rate you used to send.
+
+### Added — `project_id` on `me()`
+
+`me()` returns `project_id` (`proj_…`) beside `project`. The slug is what you
+typed and changes when you rename the project; `project_id` does not. File your
+own records under it. It is derived, not the internal UUID.
+
 ## [0.10.0] — 2026-09-08
 
 ### Fixed — the ESM half of the dual build shipped undeclared

@@ -75,7 +75,14 @@ keywords = ["sbp_"]
 [[rules]]
 id = "resend-api-key"
 description = "Resend API key"
-regex = '''re_[A-Za-z0-9]{20,}'''
+# \b before the prefix, because without it this rule fired on ordinary code. A
+# Go test named TestEnsure_RetriesOnPublicReferenceCollision contains the
+# substring "re_RetriesOnPublicReferenceCollision", which is `re_` followed by
+# twenty-odd alphanumerics — indistinguishable to the old pattern from a Resend
+# key, and enough to fail the whole security gate on three function names. A
+# real key is a standalone token: it is assigned, quoted or exported, so it is
+# always preceded by a non-word character.
+regex = '''\bre_[A-Za-z0-9]{20,}'''
 keywords = ["re_"]
 
 [[rules]]

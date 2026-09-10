@@ -148,6 +148,13 @@ must_allow "local sandbox database URL"                 infra/s.env "DATABASE_UR
 must_allow "self-describing fixture webhook secret"     src/m.rs    "let s = \"whsec_webhook_signing_secret\";"
 must_allow "forged key asserted to return 401"          src/e.mjs   "rec('unknown-key-fails', await me('bz_test_sk_deadbeefdeadbeefdeadbeefdeadbeef') === 401)"
 must_allow "a retired resource id in release evidence"  evidence/b.json "\"key\": \"8a68d114-4556-41a5-8f56-f4c12b7b2e27 — REVOKED, confirmed rejected with 401\","
+# Not an exception — the rule simply must not fire inside an identifier. These
+# three real function names failed the security gate: "TestEnsure_Retries…"
+# contains `re_` followed by twenty-odd alphanumerics. A gate that fails on
+# ordinary code is a gate people learn to skip.
+must_allow "a Go test name containing re_"             src/a_test.go "func TestEnsure_RetriesOnPublicReferenceCollision(t *testing.T) {"
+must_allow "another identifier containing re_"         src/b_test.go "func TestEnsure_ConcurrentCallersConvergeOnOneProof(t *testing.T) {"
+must_allow "a snake_case field containing re_"         src/c.go      "type X struct{ SignatureRe_ValueForAuditTrail string }"
 
 echo
 echo "▸ A directory exemption may only cover untracked content"

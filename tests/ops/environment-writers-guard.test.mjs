@@ -26,17 +26,37 @@ const REPO = join(import.meta.dirname, '../..');
 /**
  * Tables that carry an environment column, read from the migrations rather than
  * hardcoded — a table that gains the column later must gain the guard with it.
+ *
+ * Both ways it can arrive. The first draft read only `ALTER TABLE … ADD COLUMN
+ * environment`, which is how migration 0018 added it to seven tables, and
+ * therefore protected seven. Eleven more declare it inline in their CREATE
+ * TABLE, and those were unguarded — including transaction_proofs, whose
+ * environment decides whether a public receipt resolves at all.
  */
 function environmentScopedTables() {
   const dir = join(REPO, 'db/migrations');
   const tables = new Set();
   for (const f of readdirSync(dir).filter((f) => f.endsWith('.sql'))) {
     const sql = readFileSync(join(dir, f), 'utf8');
-    // ALTER TABLE x ADD COLUMN environment
-    for (const m of sql.matchAll(/ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+environment\b/gi)) {
+    for (const m of sql.matchAll(/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?environment\b/gi)) {
       tables.add(m[1].toLowerCase());
     }
+    // CREATE TABLE x ( … environment … ). The body is taken to the matching
+    // close paren so a later table's column cannot be attributed to this one.
+    for (const m of sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(/gi)) {
+      const open = m.index + m[0].length - 1;
+      let depth = 0, end = open;
+      for (let i = open; i < sql.length; i++) {
+        if (sql[i] === '(') depth++;
+        else if (sql[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (/^\s*environment\s/im.test(sql.slice(open + 1, end))) tables.add(m[1].toLowerCase());
+    }
   }
+  // platform_settings.environment is a SCOPE, not a universe: it holds 'GLOBAL'
+  // and says which stacks a setting applies to. Its writers rely on that default
+  // deliberately, and it is the one place where relying on the default is right.
+  tables.delete('platform_settings');
   return tables;
 }
 
@@ -90,8 +110,15 @@ describe('environment-scoped writers', () => {
   it('the migration set still declares the tables this guard protects', () => {
     // A rename or a squashed migration would otherwise turn the whole guard into
     // a no-op that passes loudly.
-    assert.ok(tables.size >= 7, `expected the environment-scoped tables, found ${[...tables]}`);
-    for (const t of ['transfers', 'transactions', 'payouts', 'payment_links', 'qr_codes', 'webhook_endpoints', 'api_keys']) {
+    assert.ok(tables.size >= 18, `expected every environment-scoped table, found ${tables.size}: ${[...tables].sort()}`);
+    for (const t of [
+      // added by 0018
+      'transfers', 'transactions', 'payouts', 'payment_links', 'qr_codes', 'webhook_endpoints', 'api_keys',
+      // declared inline, and unguarded until this test learned to read a CREATE TABLE
+      'transaction_proofs', 'wallet_payments', 'app_settlements', 'merchant_applications',
+      'kyc_cases', 'kyc_evidence', 'merchant_kyb_documents', 'operator_fees',
+      'pricing_rules', 'pricing_profiles', 'fee_policies',
+    ]) {
       assert.ok(tables.has(t), `${t} lost its environment column, or this guard lost sight of it`);
     }
   });

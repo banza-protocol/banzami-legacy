@@ -43,8 +43,8 @@ func TestProcessOutbox_FansOutToOwningMerchantOnly(t *testing.T) {
 	// Two merchants each subscribe an active endpoint to refund.completed.
 	for _, e := range []struct{ id, merchant string }{{epA, merchantA}, {epB, merchantB}} {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO webhook_endpoints (id, merchant_id, url, events, active, secret)
-			 VALUES ($1, $2, 'https://example.test/hook', ARRAY['refund.completed'], true, 'sec')`,
+			`INSERT INTO webhook_endpoints (id, merchant_id, url, events, active, secret, environment)
+			 VALUES ($1, $2, 'https://example.test/hook', ARRAY['refund.completed'], true, 'sec', 'SANDBOX')`,
 			e.id, e.merchant,
 		); err != nil {
 			t.Fatalf("seed endpoint: %v", err)

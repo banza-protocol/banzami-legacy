@@ -94,8 +94,8 @@ async fn seed(pool: &PgPool) -> Fixture {
 
     let link = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO payment_links (id, merchant_id, wallet_id, slug, amount_minor, currency, status)
-         VALUES ($1,$2,$3,$4,100000,'AOA','ACTIVE')",
+        "INSERT INTO payment_links (id, merchant_id, wallet_id, slug, amount_minor, currency, status, environment)
+         VALUES ($1,$2,$3,$4,100000,'AOA','ACTIVE','SANDBOX')",
     )
     .bind(link)
     .bind(merchant)

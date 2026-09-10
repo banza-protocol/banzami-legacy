@@ -61,8 +61,8 @@ async fn seed_fee(pool: &PgPool, currency: &str, category: &str, gross: i64, fee
     let tx = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO transactions (id, idempotency_key, transaction_type, status, amount_minor,
-            fee_minor, currency, merchant_id, wallet_id)
-         VALUES ($1, $2, 'PAYMENT', 'CAPTURED', $3, $4, $5, $6, $7)",
+            fee_minor, currency, merchant_id, wallet_id, environment)
+         VALUES ($1, $2, 'PAYMENT', 'CAPTURED', $3, $4, $5, $6, $7, $8)",
     )
     .bind(tx)
     .bind(Uuid::new_v4().to_string())
@@ -71,6 +71,10 @@ async fn seed_fee(pool: &PgPool, currency: &str, category: &str, gross: i64, fee
     .bind(currency)
     .bind(Uuid::new_v4())
     .bind(wallet)
+    // The transaction now says which universe it is in, like the operator_fee
+    // below always did. The two used to disagree by omission: the fee row named
+    // the environment and the transaction it points at inherited 'LIVE'.
+    .bind(env)
     .execute(pool)
     .await
     .unwrap();

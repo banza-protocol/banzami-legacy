@@ -55,8 +55,8 @@ func seedAcquiringFixture(ctx context.Context, t *testing.T, pool *pgxpool.Pool)
 	newSession := func(linkStatus string, paidAt *time.Time) string {
 		link := uuid.NewString()
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO payment_links (id, merchant_id, wallet_id, wallet_account_id, slug, amount_minor, currency, status, paid_at)
-			 VALUES ($1,$2,$3,$4,$5,100000,'AOA',$6,$7)`,
+			`INSERT INTO payment_links (id, merchant_id, wallet_id, wallet_account_id, slug, amount_minor, currency, status, paid_at, environment)
+			 VALUES ($1,$2,$3,$4,$5,100000,'AOA',$6,$7,'SANDBOX')`,
 			link, m, wallet, wa, "s"+uuid.NewString()[:11], linkStatus, paidAt); err != nil {
 			t.Fatalf("link: %v", err)
 		}
@@ -226,8 +226,8 @@ func TestTransactions_AUsedLinkWithoutSettlementIsNotPaid(t *testing.T) {
 	}
 	stranded := uuid.NewString()
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO payment_links (id, merchant_id, wallet_id, wallet_account_id, slug, amount_minor, currency, status, paid_at)
-		 SELECT $1, merchant_id, wallet_id, wallet_account_id, $2, amount_minor, currency, 'USED', now()
+		`INSERT INTO payment_links (id, merchant_id, wallet_id, wallet_account_id, slug, amount_minor, currency, status, paid_at, environment)
+		 SELECT $1, merchant_id, wallet_id, wallet_account_id, $2, amount_minor, currency, 'USED', now(), environment
 		   FROM payment_links WHERE id = $3`, stranded, "s"+uuid.NewString()[:11], link); err != nil {
 		t.Fatalf("stranded link: %v", err)
 	}
@@ -300,8 +300,8 @@ func TestTransactions_AcquiringStateFollowsTheInterfaceActuallyUsed(t *testing.T
 	used := time.Now().UTC().Truncate(time.Second)
 	if _, err := pool.Exec(ctx,
 		// A DYNAMIC QR must carry an expiry (qr_codes_dynamic_requires_expiry).
-		`INSERT INTO qr_codes (id, owner_id, owner_type, qr_type, currency, amount_minor, status, used_at, expires_at, wallet_account_id)
-		 VALUES ($1,$2,'MERCHANT','DYNAMIC','AOA',100000,'USED',$3,$4,$5)`,
+		`INSERT INTO qr_codes (id, owner_id, owner_type, qr_type, currency, amount_minor, status, used_at, expires_at, wallet_account_id, environment)
+		 VALUES ($1,$2,'MERCHANT','DYNAMIC','AOA',100000,'USED',$3,$4,$5,'SANDBOX')`,
 		qr, m, used, used.Add(time.Hour), wa); err != nil {
 		t.Fatalf("qr_codes: %v", err)
 	}

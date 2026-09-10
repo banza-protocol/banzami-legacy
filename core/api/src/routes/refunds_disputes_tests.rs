@@ -77,8 +77,8 @@ async fn seed_captured_tx(pool: &PgPool, amount: i64) -> Seed {
     let transaction_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO transactions
-            (id, idempotency_key, transaction_type, status, amount_minor, fee_minor, currency, merchant_id, wallet_id)
-         VALUES ($1, $2, 'PAYMENT', 'CAPTURED', $3, 0, 'AOA', $4, $5)",
+            (id, idempotency_key, transaction_type, status, amount_minor, fee_minor, currency, merchant_id, wallet_id, environment)
+         VALUES ($1, $2, 'PAYMENT', 'CAPTURED', $3, 0, 'AOA', $4, $5, 'SANDBOX')",
     )
     .bind(transaction_id)
     .bind(format!("seed-{transaction_id}"))
@@ -1400,8 +1400,8 @@ async fn seed_extra_tx(pool: &PgPool, merchant_id: Uuid, amount: i64) -> Uuid {
     .unwrap();
     let tx = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO transactions (id, idempotency_key, transaction_type, status, amount_minor, fee_minor, currency, merchant_id, wallet_id)
-         VALUES ($1, $2, 'PAYMENT', 'CAPTURED', $3, 0, 'AOA', $4, $5)",
+        "INSERT INTO transactions (id, idempotency_key, transaction_type, status, amount_minor, fee_minor, currency, merchant_id, wallet_id, environment)
+         VALUES ($1, $2, 'PAYMENT', 'CAPTURED', $3, 0, 'AOA', $4, $5, 'SANDBOX')",
     )
     .bind(tx).bind(format!("extra-{tx}")).bind(amount).bind(merchant_id).bind(wallet_id)
     .execute(pool).await.unwrap();

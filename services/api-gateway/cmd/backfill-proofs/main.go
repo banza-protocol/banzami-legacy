@@ -52,19 +52,28 @@ import (
 // including the Method strings and the ledger reference, so a backfilled proof
 // is indistinguishable from one the live path would have minted — apart from the
 // reference, which is the whole point.
+//
+// They deliberately do NOT filter on the source row's environment, and the proof
+// does not inherit it. Those rows are exactly the ones 0113 repairs: most of them
+// still say LIVE because their writer omitted the column. Reading the universe
+// off a row we already know is mislabelled would be circular, and it would force
+// the backfill to run after the migration — leaving a window in which a receipt
+// request mints a SECURE_V1 proof for a record whose legacy reference is already
+// printed on somebody's PDF, killing that reference permanently. The environment
+// comes from platform_mode, which is the authority, and this can therefore run
+// first.
 const transfersQuery = `
 	SELECT t.id::text,
 	       t.sender_id::text, t.recipient_id::text,
 	       COALESCE(cs.handle,''), COALESCE(NULLIF(TRIM(cs.display_name),''), '@'||cs.handle, ''),
 	       COALESCE(cr.handle,''), COALESCE(NULLIF(TRIM(cr.display_name),''), '@'||cr.handle, ''),
 	       t.amount_minor, t.currency, t.status, COALESCE(t.description,''),
-	       COALESCE(t.updated_at, t.created_at), t.environment
+	       COALESCE(t.updated_at, t.created_at)
 	  FROM transfers t
 	  LEFT JOIN consumers cs ON cs.id = t.sender_id
 	  LEFT JOIN consumers cr ON cr.id = t.recipient_id
-	 WHERE t.environment = 'SANDBOX'
-	   AND NOT EXISTS (SELECT 1 FROM transaction_proofs p
-	                    WHERE p.transaction_id = t.id::text AND p.environment = t.environment)
+	 WHERE NOT EXISTS (SELECT 1 FROM transaction_proofs p
+	                    WHERE p.transaction_id = t.id::text AND p.environment = $1)
 	 ORDER BY t.created_at`
 
 const walletPaymentsQuery = `
@@ -73,13 +82,12 @@ const walletPaymentsQuery = `
 	       COALESCE(c.handle,''), COALESCE(NULLIF(TRIM(c.display_name),''), '@'||c.handle, ''),
 	       COALESCE(m.name,''),
 	       wp.amount_minor, wp.currency, wp.status,
-	       wp.created_at, wp.environment
+	       wp.created_at
 	  FROM wallet_payments wp
 	  LEFT JOIN consumers c ON c.id = wp.consumer_id
 	  LEFT JOIN merchants m ON m.id = wp.merchant_id
-	 WHERE wp.environment = 'SANDBOX'
-	   AND NOT EXISTS (SELECT 1 FROM transaction_proofs p
-	                    WHERE p.transaction_id = wp.id::text AND p.environment = wp.environment)
+	 WHERE NOT EXISTS (SELECT 1 FROM transaction_proofs p
+	                    WHERE p.transaction_id = wp.id::text AND p.environment = $1)
 	 ORDER BY wp.created_at`
 
 type outcome struct{ materialised, skipped, failed int }
@@ -126,8 +134,10 @@ func main() {
 		os.Getenv("BZM_NETWORK"), os.Getenv("BZM_PROOF_PUBLIC_BASE"))
 
 	total := outcome{}
-	total.add(run(ctx, pool, svc, "transfers", transfersQuery, scanTransfer, *apply))
-	total.add(run(ctx, pool, svc, "wallet_payments", walletPaymentsQuery, scanWalletPayment, *apply))
+	// env.SandboxName, not the string on the row: platform_mode is the authority
+	// and the rows are the thing being corrected.
+	total.add(run(ctx, pool, svc, "transfers", transfersQuery, scanTransfer, env.SandboxName, *apply))
+	total.add(run(ctx, pool, svc, "wallet_payments", walletPaymentsQuery, scanWalletPayment, env.SandboxName, *apply))
 
 	verb := "would materialise"
 	if *apply {
@@ -140,18 +150,19 @@ func main() {
 	}
 }
 
-type rowScanner func(rows interface {
-	Scan(dest ...any) error
-}) (sourceID string, in service.ProofInput, err error)
+// scannable is one row. Named so the two scanners read as what they are.
+type scannable interface{ Scan(dest ...any) error }
 
-func scanTransfer(r interface{ Scan(dest ...any) error }) (string, service.ProofInput, error) {
+type rowScanner func(r scannable, environment string) (sourceID string, in service.ProofInput, err error)
+
+func scanTransfer(r scannable, environment string) (string, service.ProofInput, error) {
 	var id, senderID, recipientID, senderHandle, senderName, recipientHandle, recipientName string
 	var amount int64
-	var currency, status, description, environment string
+	var currency, status, description string
 	var confirmed time.Time
 	if err := r.Scan(&id, &senderID, &recipientID, &senderHandle, &senderName,
 		&recipientHandle, &recipientName, &amount, &currency, &status,
-		&description, &confirmed, &environment); err != nil {
+		&description, &confirmed); err != nil {
 		return "", service.ProofInput{}, err
 	}
 	return id, service.ProofInput{
@@ -170,13 +181,13 @@ func scanTransfer(r interface{ Scan(dest ...any) error }) (string, service.Proof
 	}, nil
 }
 
-func scanWalletPayment(r interface{ Scan(dest ...any) error }) (string, service.ProofInput, error) {
+func scanWalletPayment(r scannable, environment string) (string, service.ProofInput, error) {
 	var id, consumerID, merchantID, payerHandle, payerName, merchantName string
 	var amount int64
-	var currency, status, environment string
+	var currency, status string
 	var created time.Time
 	if err := r.Scan(&id, &consumerID, &merchantID, &payerHandle, &payerName,
-		&merchantName, &amount, &currency, &status, &created, &environment); err != nil {
+		&merchantName, &amount, &currency, &status, &created); err != nil {
 		return "", service.ProofInput{}, err
 	}
 	return id, service.ProofInput{
@@ -193,8 +204,8 @@ func scanWalletPayment(r interface{ Scan(dest ...any) error }) (string, service.
 }
 
 func run(ctx context.Context, pool *pgxpool.Pool, svc *service.ProofService,
-	family, query string, scan rowScanner, apply bool) outcome {
-	rows, err := pool.Query(ctx, query)
+	family, query string, scan rowScanner, environment string, apply bool) outcome {
+	rows, err := pool.Query(ctx, query, environment)
 	if err != nil {
 		fatal("%s: %v", family, err)
 	}
@@ -204,7 +215,7 @@ func run(ctx context.Context, pool *pgxpool.Pool, svc *service.ProofService,
 	}
 	var items []item
 	for rows.Next() {
-		sourceID, in, err := scan(rows)
+		sourceID, in, err := scan(rows, environment)
 		if err != nil {
 			fatal("%s: %v", family, err)
 		}

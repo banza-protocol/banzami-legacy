@@ -348,8 +348,18 @@ func (c *ProvisionClient) ProvisionSandboxOwner(ctx context.Context, name, email
 		var created struct {
 			ID string `json:"id"`
 		}
-		if err := c.post(ctx, "/internal/v1/merchants",
-			map[string]any{"name": name, "email": email}, &created); err != nil {
+		// The ADR-028 taxonomy is declared, not defaulted. A Developer Project's
+		// Business exists to route value on behalf of an application, which is
+		// what APPLICATION means; the create-time default is MERCHANT, and only
+		// APPLICATION/PLATFORM may be an application-fee destination. Leaving it
+		// to the default made all nine self-service Businesses fail their own
+		// fee-destination check with FEE_DESTINATION_TYPE_NOT_ALLOWED.
+		//
+		// Readiness asserts it again for owners created before this. Both, so a
+		// merchant is never left with the wrong type if readiness does not run.
+		if err := c.post(ctx, "/internal/v1/merchants", map[string]any{
+			"name": name, "email": email, "business_account_type": "APPLICATION",
+		}, &created); err != nil {
 			return nil, err
 		}
 		merchantID = created.ID
@@ -405,8 +415,9 @@ func (c *ProvisionClient) ProvisionSandboxOwner(ctx context.Context, name, email
 // is the second of two, not the only one.
 func (c *ProvisionClient) ProvisionSandboxReadiness(ctx context.Context, merchantID, projectID string) (handle, kybStatus string, err error) {
 	var out struct {
-		Handle    string `json:"handle"`
-		KybStatus string `json:"kyb_status"`
+		Handle              string `json:"handle"`
+		KybStatus           string `json:"kyb_status"`
+		BusinessAccountType string `json:"business_account_type"`
 	}
 	if err := c.post(ctx, "/internal/v1/sandbox/business-readiness", map[string]any{
 		"merchant_id": merchantID,

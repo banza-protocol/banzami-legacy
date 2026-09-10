@@ -572,22 +572,28 @@ export interface CreateWalletAccountParams {
 }
 
 // ---------------------------------------------------------------------------
-// Application Settlement — app-defined fee (ADR-029)
+// Application Settlement (ADR-029)
 // ---------------------------------------------------------------------------
 
-/** Close-out where the APP defines the fee rate (`applicationFeeBps`). The
- *  operator reads the gross from the source account's real balance, computes the
- *  fee, splits fee→fee-destination / net→beneficiary, and audits it. The app
- *  sends no amount and never computes the fee. Beneficiary and fee destination
- *  are given as @banza names; the operator resolves them. */
+/** Close-out of a segregated account. The operator reads the gross from the
+ *  account's real balance, applies the RATE ASSIGNED TO YOUR BUSINESS, splits
+ *  fee→fee-destination / net→beneficiary, and audits it. You send no amount and
+ *  never compute the fee. Beneficiary and fee destination are given as @banza
+ *  names; the operator resolves them.
+ *
+ *  There is no rate field. `applicationFeeBps` used to be here and used to work:
+ *  a non-zero value made the operator skip pricing entirely and charge whatever
+ *  the caller asked for. A caller cannot set the price of the service it is
+ *  buying, so the rate now comes from the pricing profile assigned to your
+ *  business. The operator still accepts the old field on the wire so existing
+ *  integrations do not break — it just no longer decides anything. */
 export interface CreateBusinessApplicationSettlementParams {
   /** A segregated wallet account id the caller owns (e.g. a CAMPAIGN account). */
   sourceAccountId: string;
   beneficiaryBanzaName: string;
-  /** Required when `applicationFeeBps > 0`; must be the caller's own account. */
+  /** Where the fee goes when your profile charges one. Must be your own
+   *  business account; the operator refuses a destination you do not own. */
   feeDestinationBanzaName?: string;
-  /** App-defined fee rate in basis points (0..=5000 = 50% cap). */
-  applicationFeeBps: number;
   reason?: string;
   referenceType?: string;
   referenceId?: string;

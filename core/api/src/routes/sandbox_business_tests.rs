@@ -244,3 +244,97 @@ async fn readiness_refuses_an_unknown_or_inactive_merchant(pool: PgPool) {
         "a suspended business was made settlement-ready"
     );
 }
+
+// ADR-028 has TWO conditions for an application-fee destination: KYB approved
+// AND an APPLICATION/PLATFORM account type. Readiness closed the first and left
+// the second at the create-time default, so all nine self-service Businesses
+// carried `MERCHANT` and every one of them failed its own fee-destination check
+// with FEE_DESTINATION_TYPE_NOT_ALLOWED. A Developer Project's Business exists
+// to route value on behalf of an application; that is what APPLICATION means.
+#[sqlx::test(migrations = "../../db/migrations")]
+async fn readiness_declares_the_application_fee_taxonomy(pool: PgPool) {
+    let m = merchant(&pool, "ACTIVE").await;
+    let before: Option<String> =
+        sqlx::query_scalar("SELECT business_account_type FROM merchants WHERE id = $1")
+            .bind(m)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        before.as_deref(),
+        Some("MERCHANT"),
+        "precondition: the create-time default is the one that cannot take a fee"
+    );
+
+    let state = state_for(pool.clone(), CoreEnvironment::Sandbox).await;
+    let (_, Json(res)) = business_readiness(
+        State(state),
+        Json(ReadinessBody {
+            merchant_id: m.to_string(),
+            handle: derived(m),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(res.business_account_type, "APPLICATION");
+    let after: Option<String> =
+        sqlx::query_scalar("SELECT business_account_type FROM merchants WHERE id = $1")
+            .bind(m)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(after.as_deref(), Some("APPLICATION"));
+}
+
+// An operator's deliberate choice outranks a provisioning retry, exactly as an
+// operator's KYB decision does. Promotion happens only FROM the default, which
+// is the state that means nobody chose.
+#[sqlx::test(migrations = "../../db/migrations")]
+async fn readiness_does_not_overrule_a_deliberate_taxonomy(pool: PgPool) {
+    let m = merchant(&pool, "ACTIVE").await;
+    sqlx::query("UPDATE merchants SET business_account_type = 'PLATFORM' WHERE id = $1")
+        .bind(m)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let state = state_for(pool.clone(), CoreEnvironment::Sandbox).await;
+    let (_, Json(res)) = business_readiness(
+        State(state),
+        Json(ReadinessBody {
+            merchant_id: m.to_string(),
+            handle: derived(m),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        res.business_account_type, "PLATFORM",
+        "a type an operator set must survive a provisioning retry"
+    );
+}
+
+// Idempotent, like the rest of readiness: a second call changes nothing.
+#[sqlx::test(migrations = "../../db/migrations")]
+async fn readiness_taxonomy_is_idempotent(pool: PgPool) {
+    let m = merchant(&pool, "ACTIVE").await;
+    let state = || state_for(pool.clone(), CoreEnvironment::Sandbox);
+    let body = || ReadinessBody {
+        merchant_id: m.to_string(),
+        handle: derived(m),
+    };
+
+    let (_, Json(first)) = business_readiness(State(state().await), Json(body()))
+        .await
+        .unwrap();
+    let (_, Json(second)) = business_readiness(State(state().await), Json(body()))
+        .await
+        .unwrap();
+
+    assert_eq!(first.business_account_type, "APPLICATION");
+    assert_eq!(second.business_account_type, "APPLICATION");
+    assert!(first.provisioned, "the first call did the work");
+    assert!(!second.provisioned, "the second found nothing left to do");
+}

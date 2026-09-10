@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -134,5 +135,53 @@ func TestApplicationSettlement_CoreServerErrorStaysBadGateway(t *testing.T) {
 				t.Fatalf("upstream detail leaked: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+// The rate belongs to the operator, not to the caller.
+//
+// core treats a non-zero application_fee_bps as the APP-DEFINED path and does
+// not consult the Pricing Engine at all. The handler forwarded the caller's
+// number while its own comment claimed the field was ignored, so every existing
+// integration — all of which still send it, because the old contract asked them
+// to — was choosing its own rate up to the 50% domain maximum, and the pricing
+// profile the handler resolves was dead code for exactly those requests.
+func TestApplicationSettlement_CallerSuppliedRateNeverReachesPricing(t *testing.T) {
+	for _, bps := range []int{500, 4999, 1} {
+		fs := &fakeSettlements{}
+		h := NewApplicationSettlementHandler(fs, &fakeWallets{merchantID: "doa-merchant"},
+			&fakeWalletAccounts{balance: 100000}, &fakeParties{}, pricedFake())
+		body := `{"idempotency_key":"idem-bps","source_account_id":"acct-campaign",
+		          "beneficiary_banza_name":"maria","fee_destination_banza_name":"doa",
+		          "application_fee_bps":` + strconv.Itoa(bps) + `,"reference_id":"ref-bps"}`
+		rec := postBusiness(h, "doa-merchant", body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("bps=%d: want 201, got %d (%s)", bps, rec.Code, rec.Body.String())
+		}
+		if fs.lastInput.ApplicationFeeBps != 0 {
+			t.Fatalf("bps=%d reached core as %d — the caller set the operator's rate",
+				bps, fs.lastInput.ApplicationFeeBps)
+		}
+		// The operator's own policy must still be the thing that prices it.
+		if fs.lastInput.PricingProfile == "" {
+			t.Fatalf("bps=%d: the merchant's pricing profile was not applied", bps)
+		}
+	}
+}
+
+// Sending the retired field must not become an error. An integration written
+// against the old contract keeps working; it simply no longer decides the price.
+func TestApplicationSettlement_RetiredRateFieldIsAcceptedNotRefused(t *testing.T) {
+	fs := &fakeSettlements{}
+	h := NewApplicationSettlementHandler(fs, &fakeWallets{merchantID: "doa-merchant"},
+		&fakeWalletAccounts{balance: 100000}, &fakeParties{}, pricedFake())
+	body := `{"idempotency_key":"idem-legacy","source_account_id":"acct-campaign",
+	          "beneficiary_banza_name":"maria","fee_destination_banza_name":"doa",
+	          "application_fee_bps":500,"reference_id":"ref-legacy"}`
+	if rec := postBusiness(h, "doa-merchant", body); rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if fs.lastInput.ApplicationFeeAccountID != "acct-doa" {
+		t.Fatal("the named fee destination must still be resolved")
 	}
 }

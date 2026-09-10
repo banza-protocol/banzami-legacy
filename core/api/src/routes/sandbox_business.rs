@@ -10,8 +10,14 @@
 //! no ordinary external Developer Project could complete a settlement.
 //!
 //! The same gap closes the fee-bearing path: ADR-028 requires an application-fee
-//! destination to be KYB-approved, and nothing on the public Sandbox lifecycle
-//! could ever produce that record.
+//! destination to be KYB-approved AND to be an APPLICATION/PLATFORM account, and
+//! nothing on the public Sandbox lifecycle could ever produce either. KYB was
+//! closed first; the TYPE was not, so all nine self-service Sandbox Businesses
+//! were left as `MERCHANT` — the create-time default — and every one of them
+//! failed its own fee-destination check with FEE_DESTINATION_TYPE_NOT_ALLOWED.
+//! A Developer Project Business is an application routing value on behalf of an
+//! application. That is what APPLICATION means in ADR-028, so it is declared
+//! here rather than left to a default that describes something else.
 //!
 //! WHY HERE AND NOT IN THE API LAYER
 //!
@@ -55,6 +61,10 @@ pub struct ReadinessResponse {
     pub merchant_id: String,
     pub handle: String,
     pub kyb_status: String,
+    /// The ADR-028 taxonomy this Business ended up with. Reported rather than
+    /// assumed: the two fee-destination conditions are KYB and type, and a
+    /// caller that can only see one of them cannot tell which one refused.
+    pub business_account_type: String,
     /// True when this call created what was missing rather than finding it.
     pub provisioned: bool,
 }
@@ -143,6 +153,25 @@ pub async fn business_readiness(
         }
     };
 
+    // The ADR-028 taxonomy. Promoted only FROM the create-time default: an
+    // operator who has deliberately set this account to something else has made
+    // a decision, and a provisioning retry does not get to overrule it. Coming
+    // from 'MERCHANT' means nobody chose — the merchant was created by
+    // /internal/v1/merchants with no type at all.
+    let promoted: Option<(String,)> = sqlx::query_as(
+        "UPDATE merchants
+            SET business_account_type = 'APPLICATION', updated_at = now()
+          WHERE id = $1 AND COALESCE(business_account_type, 'MERCHANT') = 'MERCHANT'
+          RETURNING business_account_type",
+    )
+    .bind(merchant_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+    if promoted.is_some() {
+        provisioned = true;
+    }
+
     // Sandbox KYB. DO NOTHING, never an upsert: a real decision recorded against
     // this merchant — including a REJECTED or SUSPENDED one — outranks
     // provisioning, and a retry must not launder it into APPROVED.
@@ -173,6 +202,15 @@ pub async fn business_readiness(
         .map_err(|e| ApiError::internal(e.to_string()))?,
     };
 
+    let account_type = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT business_account_type FROM merchants WHERE id = $1",
+    )
+    .bind(merchant_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .unwrap_or_else(|| "MERCHANT".into());
+
     super::risk::audit(
         &state.pool,
         "SYSTEM",
@@ -183,6 +221,7 @@ pub async fn business_readiness(
             "decision": kyb_status,
             "source": "sandbox_business_readiness",
             "handle": handle,
+            "business_account_type": account_type,
             "environment": state.environment.as_str(),
         }),
         None,
@@ -200,6 +239,7 @@ pub async fn business_readiness(
             merchant_id: merchant_id.to_string(),
             handle,
             kyb_status,
+            business_account_type: account_type,
             provisioned,
         }),
     ))

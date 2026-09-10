@@ -166,14 +166,23 @@ func TestApplicationSettlement_FromForeignCampaignAccount(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ADR-029 — app-defined business settlement (/v1/application-settlements)
+// ADR-029 — business settlement (/v1/application-settlements)
 // ---------------------------------------------------------------------------
 
+// Still carries application_fee_bps, because every deployed integration does and
+// the handler must keep accepting it. It no longer decides anything.
 const doaBody = `{"idempotency_key":"doa-c1","source_account_id":"wa-camp","beneficiary_banza_name":"@maria","fee_destination_banza_name":"@doa","application_fee_bps":500,"reason":"CAMPAIGN_CLOSE","reference_type":"DOA_CAMPAIGN","reference_id":"campaign_123"}`
 
-// Happy path: app-defined 5% on an owned CAMPAIGN account → create + complete,
-// fee bps + resolved beneficiary/fee accounts passed to core.
-func TestBusinessSettlement_AppDefinedFee(t *testing.T) {
+// Happy path on an owned CAMPAIGN account → create + complete, with the resolved
+// beneficiary/fee accounts, the real balance as the gross, and the merchant's
+// own pricing profile.
+//
+// This test used to assert the opposite of its last check: that a caller's 500
+// bps "must reach core". It did reach core, and core treats a non-zero
+// application_fee_bps as the APP-DEFINED path — the Pricing Engine is not
+// consulted at all. So the assertion was pinning a hole: the caller was setting
+// the price of the service it was buying, up to the 50% domain maximum.
+func TestBusinessSettlement_OperatorPricedFee(t *testing.T) {
 	fs := &fakeSettlements{}
 	h := NewApplicationSettlementHandler(fs, &fakeWallets{merchantID: "doa-merchant"}, &fakeWalletAccounts{balance: 200000}, &fakeParties{}, pricedFake())
 	rec := postBusiness(h, "doa-merchant", doaBody)
@@ -183,8 +192,11 @@ func TestBusinessSettlement_AppDefinedFee(t *testing.T) {
 	if fs.created != 1 || fs.completed != 1 {
 		t.Fatalf("want create+complete, got created=%d completed=%d", fs.created, fs.completed)
 	}
-	if fs.lastInput.ApplicationFeeBps != 500 {
-		t.Fatalf("app-defined bps must reach core, got %d", fs.lastInput.ApplicationFeeBps)
+	if fs.lastInput.ApplicationFeeBps != 0 {
+		t.Fatalf("the caller's rate must not reach core, got %d", fs.lastInput.ApplicationFeeBps)
+	}
+	if fs.lastInput.PricingProfile == "" {
+		t.Fatal("the operator's assigned pricing profile must be what prices this")
 	}
 	if fs.lastInput.BeneficiaryAccountID != "acct-maria" || fs.lastInput.ApplicationFeeAccountID != "acct-doa" {
 		t.Fatalf("resolved @names must be passed: ben=%q fee=%q", fs.lastInput.BeneficiaryAccountID, fs.lastInput.ApplicationFeeAccountID)

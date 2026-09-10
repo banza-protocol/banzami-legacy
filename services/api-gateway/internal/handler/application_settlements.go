@@ -306,11 +306,15 @@ func (h *ApplicationSettlementHandler) CreateBusiness(w http.ResponseWriter, r *
 		SourceAccountID         string `json:"source_account_id"` // the campaign wallet_account id
 		BeneficiaryBanzaName    string `json:"beneficiary_banza_name"`
 		FeeDestinationBanzaName string `json:"fee_destination_banza_name"`
-		ApplicationFeeBps       int    `json:"application_fee_bps"`
-		Reason                  string `json:"reason"`
-		ReferenceType           string `json:"reference_type"`
-		ReferenceID             string `json:"reference_id"`
-		IdempotencyKey          string `json:"idempotency_key"`
+		// Accepted and validated, never used to price. It is out of the public
+		// contract; it is still parsed so that an integration built against the
+		// old one keeps working instead of receiving a 400 for a field it was
+		// previously told to send.
+		ApplicationFeeBps int    `json:"application_fee_bps"`
+		Reason            string `json:"reason"`
+		ReferenceType     string `json:"reference_type"`
+		ReferenceID       string `json:"reference_id"`
+		IdempotencyKey    string `json:"idempotency_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		apierror.Respond(w, r, http.StatusBadRequest, "INVALID_BODY", "request body must be valid JSON")
@@ -403,6 +407,14 @@ func (h *ApplicationSettlementHandler) CreateBusiness(w http.ResponseWriter, r *
 	// request. A caller that sends one is ignored rather than refused: refusing
 	// would break every existing integration to prevent something the caller can
 	// no longer do anyway.
+	//
+	// "Ignored" now means it. Until this commit the comment said the field was
+	// ignored while the handler forwarded it, and core treats a non-zero
+	// application_fee_bps as the APP-DEFINED path: the Pricing Engine is not
+	// consulted at all. So every caller still sending the field — which is every
+	// existing integration, because the old contract asked for it — was setting
+	// its own rate, up to the 50% domain maximum, and the pricing profile
+	// resolved two lines above was dead code for exactly those requests.
 	pricingProfile, perr := h.resolvePricingProfile(r.Context(), callerMerchantID)
 	if perr != nil {
 		respondPricing(w, r, perr)
@@ -417,9 +429,11 @@ func (h *ApplicationSettlementHandler) CreateBusiness(w http.ResponseWriter, r *
 		SourceAccountID:         coreSource,
 		BeneficiaryAccountID:    ben.AvailableAccountID,
 		ApplicationFeeAccountID: feeAccountID,
-		ApplicationFeeBps:       body.ApplicationFeeBps,
-		GrossAmountMinor:        acc.AvailableBalanceMinor,
-		Currency:                currency,
+		// Deliberately not body.ApplicationFeeBps. Leaving it zero is what selects
+		// the operator-priced path in core; forwarding the caller's number is what
+		// selected the caller's.
+		GrossAmountMinor: acc.AvailableBalanceMinor,
+		Currency:         currency,
 		// This path never named anything, so every settlement through it resolved
 		// no rule — which is to say, cost nothing. It now carries the merchant's
 		// assigned policy, so the operator's rate applies to the owner it was

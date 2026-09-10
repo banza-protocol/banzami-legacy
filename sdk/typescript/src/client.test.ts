@@ -647,14 +647,13 @@ describe('app-defined application settlement', () => {
     completed_at: null, failure_reason: null,
   };
 
-  it('createBusinessApplicationSettlement sends bps + @names and NO amount', async () => {
+  it('createBusinessApplicationSettlement sends @names and NO amount', async () => {
     mockFetch(201, settled);
     await client.createBusinessApplicationSettlement({
       idempotencyKey: 'doa-camp-1-settle',
       sourceAccountId: 'wa-1',
       beneficiaryBanzaName: '@maria',
       feeDestinationBanzaName: '@doa',
-      applicationFeeBps: 500,
       referenceType: 'DOA_CAMPAIGN',
       referenceId: 'camp-1',
     });
@@ -665,12 +664,28 @@ describe('app-defined application settlement', () => {
     expect(body.source_account_id).toBe('wa-1');
     expect(body.beneficiary_banza_name).toBe('@maria');
     expect(body.fee_destination_banza_name).toBe('@doa');
-    expect(body.application_fee_bps).toBe(500);
     expect(body.reason).toBe('CAMPAIGN_CLOSE');
     // the app never sends an amount or a computed fee
     expect(body.gross_amount_minor).toBeUndefined();
     expect(body.amount_minor).toBeUndefined();
     expect(body.application_fee_minor).toBeUndefined();
+  });
+
+  it('the SDK cannot be made to send a fee rate', async () => {
+    // A JavaScript caller has no types, so removing the field from the interface
+    // is not by itself a control. The rate was the one thing on this request a
+    // caller could set that changed what it paid: a non-zero application_fee_bps
+    // made the operator skip pricing entirely.
+    mockFetch(201, settled);
+    await client.createBusinessApplicationSettlement({
+      idempotencyKey: 'doa-camp-2-settle',
+      sourceAccountId: 'wa-1',
+      beneficiaryBanzaName: '@maria',
+      feeDestinationBanzaName: '@doa',
+      applicationFeeBps: 4999,
+    } as never);
+    const body = JSON.parse(lastFetchCall().init.body as string);
+    expect(body.application_fee_bps).toBeUndefined();
   });
 
   it('createApplicationSettlement cannot be made to send a pricing selector', async () => {

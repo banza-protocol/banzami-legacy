@@ -252,7 +252,25 @@ func TestNotificationsSummary_ToleratesMissingTable(t *testing.T) {
 		if _, err := pool.Exec(ctx, `ALTER TABLE disputes RENAME TO disputes__hidden_for_test`); err != nil {
 			t.Skipf("cannot hide disputes table: %v", err)
 		}
-		t.Cleanup(func() { _, _ = pool.Exec(ctx, `ALTER TABLE disputes__hidden_for_test RENAME TO disputes`) })
+		// Restored by defer, not t.Cleanup, and the error is not discarded.
+		//
+		// Cleanups run AFTER the test function returns — which is after the
+		// `defer pool.Close()` above has already closed the pool. So the restore
+		// ran against a dead pool, `_ =` swallowed the failure, and the table
+		// stayed renamed. Every later user of that database then found `disputes`
+		// missing: sqlx::query! stopped compiling core-api against it, and this
+		// test itself started reporting the absent-table case as if it were real.
+		// A test that reshapes a shared schema has to put it back, loudly.
+		//
+		// Deferred funcs run last-in-first-out, so this one runs before the pool
+		// is closed.
+		defer func() {
+			if _, err := pool.Exec(context.Background(),
+				`ALTER TABLE disputes__hidden_for_test RENAME TO disputes`); err != nil {
+				t.Errorf("could not restore the disputes table: %v — this database is "+
+					"now missing a relation every later run expects", err)
+			}
+		}()
 	}
 
 	sum, err := NewNotificationsService(pool).Summary(ctx)

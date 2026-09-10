@@ -803,13 +803,14 @@ export class BanzamiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Application Settlement — app-defined fee (ADR-029)
+  // Application Settlement (ADR-029)
   // ---------------------------------------------------------------------------
 
-  /** Settle a segregated account: the APP defines the fee rate
-   *  (`applicationFeeBps`); the operator reads the real balance as the gross,
-   *  resolves the @banza beneficiary / fee destination, splits and audits it.
-   *  You send no amount and never compute the fee. Idempotent on `idempotencyKey`. */
+  /** Settle a segregated account: the operator reads the real balance as the
+   *  gross, applies the rate assigned to your business, resolves the @banza
+   *  beneficiary / fee destination, splits and audits it. You send no amount,
+   *  never compute the fee, and do not choose the rate. Idempotent on
+   *  `idempotencyKey`. */
   createBusinessApplicationSettlement(
     p: CreateBusinessApplicationSettlementParams,
   ): Promise<ApplicationSettlement> {
@@ -820,7 +821,6 @@ export class BanzamiClient {
         source_account_id:          p.sourceAccountId,
         beneficiary_banza_name:     p.beneficiaryBanzaName,
         fee_destination_banza_name: p.feeDestinationBanzaName ?? null,
-        application_fee_bps:        p.applicationFeeBps,
         reason:                     p.reason ?? 'CAMPAIGN_CLOSE',
         reference_type:             p.referenceType ?? null,
         reference_id:               p.referenceId ?? null,

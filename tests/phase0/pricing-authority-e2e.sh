@@ -69,13 +69,27 @@ chk ZERO_OWNER_FOUND "$([ -n "$ZERO_M" ] && echo yes)" yes
 chk PAID_OWNER_FOUND "$([ -n "$PAID_M" ] && echo yes)" yes
 [ -n "$ZERO_M" ] && [ -n "$PAID_M" ] || { echo "no owners to price"; exit 1; }
 
-echo "### the rate each owner resolves to"
-ZRATE=$(q "select r.rate_bps from merchants m join pricing_profiles p on p.id=m.pricing_profile_id
-            join pricing_rules r on r.pricing_profile=p.code and r.environment=p.environment and r.enabled
-           where m.id='$ZERO_M'")
-PRATE=$(q "select r.rate_bps from merchants m join pricing_profiles p on p.id=m.pricing_profile_id
-            join pricing_rules r on r.pricing_profile=p.code and r.environment=p.environment and r.enabled
-           where m.id='$PAID_M'")
+echo "### the settlement rate each owner resolves to"
+# pricing_operation='SETTLEMENT', named.
+#
+# Without it this joins every enabled rule on the profile — which since the
+# payout rule (ADR-031, 0.75%) is two rows — and the shell concatenates them:
+# the zero-rated owner reported "750" and the 200-bps owner "75200". Neither is
+# a rate; both are two rates stuck together, and the assertion was comparing
+# them against a settlement number.
+#
+# This is the exact confusion the pricing model itself removed: before
+# `pricing_operation` a settlement and a payout were the same thing to the
+# resolver, so no rule could price one without pricing the other. A test that
+# reintroduces it cannot check that it is gone.
+settlement_rate() { # <merchant-id>
+  q "select r.rate_bps from merchants m join pricing_profiles p on p.id=m.pricing_profile_id
+      join pricing_rules r on r.pricing_profile=p.code and r.environment=p.environment
+                          and r.enabled and r.pricing_operation='SETTLEMENT'
+     where m.id='$1'"
+}
+ZRATE=$(settlement_rate "$ZERO_M")
+PRATE=$(settlement_rate "$PAID_M")
 chk EXPLICIT_ZERO_RATE "$ZRATE" "0"
 chk GENERIC_200_RATE   "$PRATE" "200"
 
